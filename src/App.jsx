@@ -19,7 +19,7 @@ const DEFAULT_ACCOUNTS = [
 ];
 
 const INC_SOURCES = ["Karveli Salary","Freelance","Investment Return","Kito Salary","Rental Income","Other"];
-const EXP_CATS    = ["Food & Groceries","Transport","Rent / Housing","Shopping","Health","Entertainment","Utilities","Phone / Data","Beauty","Giving / Tithe","Other"];
+const EXP_CATS    = ["Food & Groceries","Eating Out","Transport","Rent / Housing","Shopping","Health","Entertainment","Utilities","Phone / Data","Hair","Nails","Beauty","Savings Contributions","Gifting","Giving / Tithe","Loan Given","Other"];
 const KITO_CATS   = ["Stock / Materials","Packaging","Transport","Marketing","Equipment","Labour","Other"];
 
 // Build bubble grid from image pattern — scaled to user's total
@@ -48,10 +48,11 @@ function load() {
         transfers:  p.transfers   || [],
         budgets:    p.budgets     || {},
         recurring:  p.recurring   || [],
+        customCats: p.customCats  || [],
       };
     }
   } catch {}
-  return { accounts:DEFAULT_ACCOUNTS, income:[], expenses:[], savings:[], kSales:[], kExpenses:[], kSalary:[], kInventory:[], debts:{ iOwe:[], owedMe:[], business:[] }, challenges:[], transfers:[], budgets:{}, recurring:[] };
+  return { accounts:DEFAULT_ACCOUNTS, income:[], expenses:[], savings:[], kSales:[], kExpenses:[], kSalary:[], kInventory:[], debts:{ iOwe:[], owedMe:[], business:[] }, challenges:[], transfers:[], budgets:{}, recurring:[], customCats:[] };
 }
 function save(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} }
 
@@ -122,7 +123,7 @@ function StatBox({ label, value, bg, color }) {
 }
 
 // ── HOME ──────────────────────────────────────────────────────────────────────
-function Home({ data }) {
+function Home({ data, setData }) {
   const total    = data.accounts.reduce((s,a)=>s+ +a.balance,0);
   const totalIn  = data.income.reduce((s,x)=>s+ +x.amount,0);
   const totalOut = data.expenses.reduce((s,x)=>s+ +x.amount,0);
@@ -130,6 +131,30 @@ function Home({ data }) {
   const iOweTotal   = data.debts.iOwe.filter(x=>!x.paid).reduce((s,x)=>s+ +x.amount,0);
   const owedMeTotal = data.debts.owedMe.filter(x=>!x.paid).reduce((s,x)=>s+ +x.amount,0);
   const bizDebt     = data.debts.business.filter(x=>!x.paid).reduce((s,x)=>s+ +x.amount,0);
+  const [sheet, setSheet] = useState(null);
+  const allCats = [...EXP_CATS, ...(data.customCats||[])];
+  const [qF, setQF] = useState({ type:"expense", date:today(), category:allCats[0], source:INC_SOURCES[0], note:"", amount:"", accountId:"", isLoan:false });
+
+  const logQuick = () => {
+    if (!qF.amount||!qF.accountId) return;
+    const acct = data.accounts.find(a=>a.id===qF.accountId);
+    const acctName = acct?.name||"";
+    let nd = {...data};
+    if (qF.type==="expense") {
+      const entry = {id:uid(),date:qF.date,category:qF.category,note:qF.note,amount:qF.amount,accountId:qF.accountId,acctName};
+      nd.expenses = [entry,...nd.expenses];
+      nd.accounts = nd.accounts.map(a=>a.id===qF.accountId?{...a,balance:+a.balance- +qF.amount}:a);
+      if (qF.isLoan) nd.debts = {...nd.debts, owedMe:[{id:uid(),name:qF.note||"Loan",amount:qF.amount,due:"",note:"Quick log",paid:false},...nd.debts.owedMe]};
+    } else {
+      const entry = {id:uid(),date:qF.date,source:qF.source,note:qF.note,amount:qF.amount,accountId:qF.accountId,acctName};
+      nd.income = [entry,...nd.income];
+      nd.accounts = nd.accounts.map(a=>a.id===qF.accountId?{...a,balance:+a.balance+ +qF.amount}:a);
+      if (qF.isLoan) nd.debts = {...nd.debts, iOwe:[{id:uid(),name:qF.note||"Borrowed",amount:qF.amount,due:"",note:"Quick log",paid:false},...nd.debts.iOwe]};
+    }
+    save(nd); setData(nd);
+    setQF({type:"expense",date:today(),category:allCats[0],source:INC_SOURCES[0],note:"",amount:"",accountId:"",isLoan:false});
+    setSheet(null);
+  };
 
   return (
     <>
@@ -154,7 +179,7 @@ function Home({ data }) {
           <div style={{ textAlign:"center" }}><div style={{ fontSize:22 }}>🏪</div><div style={{ fontWeight:800, color:"#F57F17", fontSize:15 }}>{fmt(bizDebt)}</div><div style={{ color:"#999", fontSize:11, marginTop:2 }}>Biz debts</div></div>
         </div>
       </div>
-      <div style={{ margin:"0 16px", background:"#fff", borderRadius:16, padding:16 }}>
+      <div style={{ margin:"0 16px 80px", background:"#fff", borderRadius:16, padding:16 }}>
         <div style={{ fontSize:13, fontWeight:800, color:"#333", marginBottom:12 }}>Account Breakdown</div>
         {data.accounts.filter(a=> +a.balance>0).length===0
           ? <div style={{ color:"#AAA", fontSize:13, textAlign:"center", padding:"16px 0" }}>Set your balances in Accounts tab 👆</div>
@@ -167,6 +192,58 @@ function Home({ data }) {
             ))
         }
       </div>
+
+      {/* Floating + button */}
+      <button onClick={()=>setSheet("quick")} style={{
+        position:"fixed", bottom:80, right:20, width:56, height:56, borderRadius:"50%",
+        background:"linear-gradient(135deg,#E8552A,#E8852A)", color:"#fff", border:"none",
+        fontSize:28, fontWeight:300, cursor:"pointer", zIndex:40,
+        boxShadow:"0 4px 16px #E8552A66", display:"flex", alignItems:"center", justifyContent:"center"
+      }}>+</button>
+
+      {/* Quick log sheet */}
+      <Sheet open={sheet==="quick"} onClose={()=>setSheet(null)} title="⚡ Quick Log">
+        {/* Type toggle */}
+        <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+          {["expense","income"].map(t=>(
+            <button key={t} onClick={()=>setQF(f=>({...f,type:t}))} style={{ flex:1, padding:"10px", borderRadius:10, border:"none", background:qF.type===t?(t==="expense"?"#C62828":"#2E7D32"):"#F5F5F5", color:qF.type===t?"#fff":"#999", fontWeight:700, fontSize:13, cursor:"pointer", textTransform:"capitalize" }}>{t}</button>
+          ))}
+        </div>
+        <label style={S.lbl}>Date</label>
+        <input style={S.inp} type="date" value={qF.date} onChange={e=>setQF(f=>({...f,date:e.target.value}))}/>
+        {qF.type==="expense"
+          ? <><label style={S.lbl}>Category</label>
+            <select style={S.sel} value={qF.category} onChange={e=>setQF(f=>({...f,category:e.target.value}))}>
+              {allCats.map(c=><option key={c}>{c}</option>)}
+            </select></>
+          : <><label style={S.lbl}>Source</label>
+            <select style={S.sel} value={qF.source} onChange={e=>setQF(f=>({...f,source:e.target.value}))}>
+              {INC_SOURCES.map(s=><option key={s}>{s}</option>)}
+            </select></>
+        }
+        <label style={S.lbl}>{qF.type==="expense"?"From":"Into"} Account *</label>
+        <select style={S.sel} value={qF.accountId} onChange={e=>setQF(f=>({...f,accountId:e.target.value}))}>
+          <option value="">Select account…</option>
+          {data.accounts.map(a=><option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}
+        </select>
+        <label style={S.lbl}>Amount (UGX) *</label>
+        <input style={S.inp} type="number" value={qF.amount} onChange={e=>setQF(f=>({...f,amount:e.target.value}))} placeholder="0"/>
+        <label style={S.lbl}>Note</label>
+        <input style={S.inp} type="text" value={qF.note} onChange={e=>setQF(f=>({...f,note:e.target.value}))} placeholder="Optional"/>
+        {/* Loan toggle */}
+        <div onClick={()=>setQF(f=>({...f,isLoan:!f.isLoan}))} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:qF.isLoan?"#E8F5E9":"#F5F5F5", borderRadius:12, marginBottom:14, cursor:"pointer" }}>
+          <div style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${qF.isLoan?"#2E7D32":"#CCC"}`, background:qF.isLoan?"#2E7D32":"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {qF.isLoan && <span style={{ color:"#fff", fontSize:14 }}>✓</span>}
+          </div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:13, color:qF.isLoan?"#2E7D32":"#555" }}>
+              {qF.type==="expense"?"This is a loan I gave someone 💸":"This is money I borrowed 🤝"}
+            </div>
+            <div style={{ fontSize:11, color:"#999" }}>Auto-adds to Debts tab</div>
+          </div>
+        </div>
+        <button style={btn(qF.type==="expense"?"#C62828":"#2E7D32")} onClick={logQuick}>Log It ✓</button>
+      </Sheet>
     </>
   );
 }
@@ -315,21 +392,23 @@ function Accounts({ data, setData }) {
 function Personal({ data, setData }) {
   const [sub, setSub]     = useState("income");
   const [sheet, setSheet] = useState(null);
-  const [iF, setIF] = useState({ date:today(), source:INC_SOURCES[0], note:"", amount:"", accountId:"" });
-  const [eF, setEF] = useState({ date:today(), category:EXP_CATS[0], note:"", amount:"", accountId:"" });
+  const [iF, setIF] = useState({ date:today(), source:INC_SOURCES[0], note:"", amount:"", accountId:"", isBorrowed:false });
+  const [eF, setEF] = useState({ date:today(), category:EXP_CATS[0], note:"", amount:"", accountId:"", isLoan:false });
   const [sF, setSF] = useState({ name:"", goal:"", current:"" });
 
   const addIncome = () => {
     if (!iF.amount||!iF.accountId) return;
     const acct=data.accounts.find(a=>a.id===iF.accountId);
-    const nd={...data,income:[{id:uid(),...iF,acctName:acct?.name||""},...data.income],accounts:data.accounts.map(a=>a.id===iF.accountId?{...a,balance:+a.balance+ +iF.amount}:a)};
-    save(nd);setData(nd);setIF({date:today(),source:INC_SOURCES[0],note:"",amount:"",accountId:""});setSheet(null);
+    let nd={...data,income:[{id:uid(),...iF,acctName:acct?.name||""},...data.income],accounts:data.accounts.map(a=>a.id===iF.accountId?{...a,balance:+a.balance+ +iF.amount}:a)};
+    if (iF.isBorrowed) nd.debts={...nd.debts,iOwe:[{id:uid(),name:iF.note||"Borrowed",amount:iF.amount,due:"",note:"From income log",paid:false},...nd.debts.iOwe]};
+    save(nd);setData(nd);setIF({date:today(),source:INC_SOURCES[0],note:"",amount:"",accountId:"",isBorrowed:false});setSheet(null);
   };
   const addExpense = () => {
     if (!eF.amount||!eF.accountId) return;
     const acct=data.accounts.find(a=>a.id===eF.accountId);
-    const nd={...data,expenses:[{id:uid(),...eF,acctName:acct?.name||""},...data.expenses],accounts:data.accounts.map(a=>a.id===eF.accountId?{...a,balance:+a.balance- +eF.amount}:a)};
-    save(nd);setData(nd);setEF({date:today(),category:EXP_CATS[0],note:"",amount:"",accountId:""});setSheet(null);
+    let nd={...data,expenses:[{id:uid(),...eF,acctName:acct?.name||""},...data.expenses],accounts:data.accounts.map(a=>a.id===eF.accountId?{...a,balance:+a.balance- +eF.amount}:a)};
+    if (eF.isLoan) nd.debts={...nd.debts,owedMe:[{id:uid(),name:eF.note||"Loan",amount:eF.amount,due:"",note:"From expense log",paid:false},...nd.debts.owedMe]};
+    save(nd);setData(nd);setEF({date:today(),category:EXP_CATS[0],note:"",amount:"",accountId:"",isLoan:false});setSheet(null);
   };
   const addSavings = () => {
     if (!sF.name) return;
@@ -427,14 +506,45 @@ function Personal({ data, setData }) {
         <label style={S.lbl}>Into Account *</label><select style={S.sel} value={iF.accountId} onChange={e=>setIF(f=>({...f,accountId:e.target.value}))}><option value="">Select account…</option>{data.accounts.map(a=><option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}</select>
         <label style={S.lbl}>Amount (UGX) *</label><input style={S.inp} type="number" value={iF.amount} onChange={e=>setIF(f=>({...f,amount:e.target.value}))} placeholder="0"/>
         <label style={S.lbl}>Note</label><input style={S.inp} type="text" value={iF.note} onChange={e=>setIF(f=>({...f,note:e.target.value}))} placeholder="Optional"/>
+        <div onClick={()=>setIF(f=>({...f,isBorrowed:!f.isBorrowed}))} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:iF.isBorrowed?"#FFEBEE":"#F5F5F5", borderRadius:12, marginBottom:14, cursor:"pointer" }}>
+          <div style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${iF.isBorrowed?"#C62828":"#CCC"}`, background:iF.isBorrowed?"#C62828":"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {iF.isBorrowed && <span style={{ color:"#fff", fontSize:14 }}>✓</span>}
+          </div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:13, color:iF.isBorrowed?"#C62828":"#555" }}>This is money I borrowed 🤝</div>
+            <div style={{ fontSize:11, color:"#999" }}>Auto-adds to Debts → I Owe</div>
+          </div>
+        </div>
         <button style={btn("#2E7D32")} onClick={addIncome}>Save Income</button>
       </Sheet>
       <Sheet open={sheet==="expense"} onClose={()=>setSheet(null)} title="Add Expense">
         <label style={S.lbl}>Date</label><input style={S.inp} type="date" value={eF.date} onChange={e=>setEF(f=>({...f,date:e.target.value}))}/>
-        <label style={S.lbl}>Category</label><select style={S.sel} value={eF.category} onChange={e=>setEF(f=>({...f,category:e.target.value}))}>{EXP_CATS.map(c=><option key={c}>{c}</option>)}</select>
+        <label style={S.lbl}>Category</label>
+        <select style={S.sel} value={eF.category} onChange={e=>setEF(f=>({...f,category:e.target.value}))}>
+          {[...EXP_CATS,...(data.customCats||[])].map(c=><option key={c}>{c}</option>)}
+        </select>
+        <label style={S.lbl}>Or add new category</label>
+        <input style={{...S.inp,marginBottom:14}} type="text" placeholder="Type new category + press Add"
+          id="newCatInput" onKeyDown={e=>{
+            if(e.key==="Enter"&&e.target.value.trim()){
+              const nc=e.target.value.trim();
+              const nd={...data,customCats:[...(data.customCats||[]),nc]};
+              save(nd);setData(nd);setEF(f=>({...f,category:nc}));e.target.value="";
+            }
+          }}/>
         <label style={S.lbl}>From Account *</label><select style={S.sel} value={eF.accountId} onChange={e=>setEF(f=>({...f,accountId:e.target.value}))}><option value="">Select account…</option>{data.accounts.map(a=><option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}</select>
         <label style={S.lbl}>Amount (UGX) *</label><input style={S.inp} type="number" value={eF.amount} onChange={e=>setEF(f=>({...f,amount:e.target.value}))} placeholder="0"/>
         <label style={S.lbl}>Note</label><input style={S.inp} type="text" value={eF.note} onChange={e=>setEF(f=>({...f,note:e.target.value}))} placeholder="Optional"/>
+        {/* Loan given toggle */}
+        <div onClick={()=>setEF(f=>({...f,isLoan:!f.isLoan}))} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:eF.isLoan?"#E8F5E9":"#F5F5F5", borderRadius:12, marginBottom:14, cursor:"pointer" }}>
+          <div style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${eF.isLoan?"#2E7D32":"#CCC"}`, background:eF.isLoan?"#2E7D32":"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {eF.isLoan && <span style={{ color:"#fff", fontSize:14 }}>✓</span>}
+          </div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:13, color:eF.isLoan?"#2E7D32":"#555" }}>This is a loan I gave someone 💸</div>
+            <div style={{ fontSize:11, color:"#999" }}>Auto-adds to Debts → Owed to Me</div>
+          </div>
+        </div>
         <button style={btn("#C62828")} onClick={addExpense}>Save Expense</button>
       </Sheet>
       <Sheet open={sheet==="savings"} onClose={()=>setSheet(null)} title="New Savings Goal">
@@ -998,29 +1108,48 @@ function Reports({ data }) {
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────────
-const TABS = [
+const DEFAULT_TABS = [
   { id:"home",      emoji:"🏠", label:"Home"     },
   { id:"accounts",  emoji:"💳", label:"Accounts" },
   { id:"personal",  emoji:"👤", label:"Personal" },
   { id:"kito",      emoji:"💎", label:"Kito"     },
   { id:"debts",     emoji:"📋", label:"Debts"    },
   { id:"challenge", emoji:"🎯", label:"Goals"    },
-  { id:"budget",    emoji:"🎯", label:"Budget"   },
+  { id:"budget",    emoji:"💰", label:"Budget"   },
   { id:"reports",   emoji:"📊", label:"Reports"  },
 ];
+
+const TAB_ORDER_KEY = "finaura_tab_order";
+function loadTabOrder() {
+  try { const o = localStorage.getItem(TAB_ORDER_KEY); return o ? JSON.parse(o) : DEFAULT_TABS.map(t=>t.id); } catch { return DEFAULT_TABS.map(t=>t.id); }
+}
 
 export default function App() {
   const [data, setData] = useState(load);
   const [tab,  setTab]  = useState("home");
+  const [tabOrder, setTabOrder] = useState(loadTabOrder);
+  const [dragId, setDragId] = useState(null);
   const dateStr = new Date().toLocaleDateString("en-UG",{ weekday:"long", day:"numeric", month:"long" });
 
-  // budget over-alert count for home badge
+  const tabs = tabOrder.map(id=>DEFAULT_TABS.find(t=>t.id===id)).filter(Boolean);
+
   const overCount = useMemo(() => {
     const budgets = data.budgets||{};
     const curMonth = monthKey(today());
     const mExp = data.expenses.filter(x=>monthKey(x.date)===curMonth);
     return EXP_CATS.filter(c => budgets[c] && mExp.filter(x=>x.category===c).reduce((s,x)=>s+ +x.amount,0) > budgets[c]).length;
   }, [data]);
+
+  const onDragStart = (id) => setDragId(id);
+  const onDragOver  = (e, id) => {
+    e.preventDefault();
+    if (!dragId || dragId===id) return;
+    const arr = [...tabOrder];
+    const from = arr.indexOf(dragId), to = arr.indexOf(id);
+    arr.splice(from,1); arr.splice(to,0,dragId);
+    setTabOrder(arr);
+    localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(arr));
+  };
 
   return (
     <div style={S.page}>
@@ -1036,17 +1165,24 @@ export default function App() {
           </div>
         </div>
         <div style={{ display:"flex", gap:4, marginTop:10, overflowX:"auto", paddingBottom:2 }}>
-          {TABS.map(t=>(
-            <button key={t.id} onClick={()=>setTab(t.id)} style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"6px 10px", borderRadius:10, border:"none", background:tab===t.id?"#FFF0EB":"transparent", color:tab===t.id?"#E8552A":"#999", fontWeight:tab===t.id?800:500, fontSize:11, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0, position:"relative" }}>
+          {tabs.map(t=>(
+            <button key={t.id}
+              draggable
+              onDragStart={()=>onDragStart(t.id)}
+              onDragOver={e=>onDragOver(e,t.id)}
+              onDragEnd={()=>setDragId(null)}
+              onClick={()=>setTab(t.id)}
+              style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"6px 10px", borderRadius:10, border:"none", background:tab===t.id?"#FFF0EB":"transparent", color:tab===t.id?"#E8552A":"#999", fontWeight:tab===t.id?800:500, fontSize:11, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0, position:"relative", opacity:dragId===t.id?0.5:1 }}>
               <span style={{ fontSize:16 }}>{t.emoji}</span>
               <span>{t.label}</span>
               {t.id==="budget" && overCount>0 && <div style={{ position:"absolute", top:4, right:6, width:8, height:8, borderRadius:"50%", background:"#C62828" }}/>}
             </button>
           ))}
         </div>
+        <div style={{ fontSize:10, color:"#CCC", textAlign:"center", paddingBottom:2 }}>hold & drag tabs to reorder</div>
       </div>
 
-      {tab==="home"      && <Home      data={data}/>}
+      {tab==="home"      && <Home      data={data} setData={setData}/>}
       {tab==="accounts"  && <Accounts  data={data} setData={setData}/>}
       {tab==="personal"  && <Personal  data={data} setData={setData}/>}
       {tab==="kito"      && <Kito      data={data} setData={setData}/>}
