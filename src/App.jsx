@@ -1,4 +1,37 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+
+// ── SUPABASE ──────────────────────────────────────────────────────────────────
+const SUPA_URL = "https://xlzdfueighmmipldadti.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsemRmdWVpZ2htbWlwbGRhZHRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNjYxNDQsImV4cCI6MjA4OTg0MjE0NH0.g1eMi2Ar3Rf6pWG_T4MChGMhCH0X3wfYpFMcUvi_qaE";
+const SUPA_ID  = "becca";
+
+async function loadFromSupabase() {
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/finaura_data?id=eq.${SUPA_ID}&select=data`, {
+      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` }
+    });
+    const rows = await res.json();
+    if (rows && rows[0] && rows[0].data && Object.keys(rows[0].data).length > 0) {
+      return rows[0].data;
+    }
+  } catch {}
+  return null;
+}
+
+async function saveToSupabase(d) {
+  try {
+    await fetch(`${SUPA_URL}/rest/v1/finaura_data?id=eq.${SUPA_ID}`, {
+      method: "PATCH",
+      headers: {
+        "apikey": SUPA_KEY,
+        "Authorization": `Bearer ${SUPA_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify({ data: d, updated_at: new Date().toISOString() })
+    });
+  } catch {}
+}
 
 const KEY = "finaura_v3";
 const fmt = (n) => "UGX " + Math.abs(Number(n)||0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",");
@@ -54,7 +87,10 @@ function load() {
   } catch {}
   return { accounts:DEFAULT_ACCOUNTS, income:[], expenses:[], savings:[], kSales:[], kExpenses:[], kSalary:[], kInventory:[], debts:{ iOwe:[], owedMe:[], business:[] }, challenges:[], transfers:[], budgets:{}, recurring:[], customCats:[] };
 }
-function save(d) { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} }
+function save(d) {
+  try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {}
+  saveToSupabase(d);
+}
 
 // ── shared styles ─────────────────────────────────────────────────────────────
 const S = {
@@ -1129,7 +1165,35 @@ export default function App() {
   const [tab,  setTab]  = useState("home");
   const [tabOrder, setTabOrder] = useState(loadTabOrder);
   const [dragId, setDragId] = useState(null);
+  const [syncing, setSyncing] = useState(true);
   const dateStr = new Date().toLocaleDateString("en-UG",{ weekday:"long", day:"numeric", month:"long" });
+
+  // Load from Supabase on first open
+  useEffect(() => {
+    loadFromSupabase().then(remote => {
+      if (remote) {
+        const merged = {
+          accounts:   remote.accounts    || DEFAULT_ACCOUNTS,
+          income:     remote.income      || [],
+          expenses:   remote.expenses    || [],
+          savings:    remote.savings     || [],
+          kSales:     remote.kSales      || [],
+          kExpenses:  remote.kExpenses   || [],
+          kSalary:    remote.kSalary     || [],
+          kInventory: remote.kInventory  || [],
+          debts:      remote.debts       || { iOwe:[], owedMe:[], business:[] },
+          challenges: remote.challenges  || [],
+          transfers:  remote.transfers   || [],
+          budgets:    remote.budgets     || {},
+          recurring:  remote.recurring   || [],
+          customCats: remote.customCats  || [],
+        };
+        setData(merged);
+        localStorage.setItem(KEY, JSON.stringify(merged));
+      }
+      setSyncing(false);
+    });
+  }, []);
 
   const tabs = tabOrder.map(id=>DEFAULT_TABS.find(t=>t.id===id)).filter(Boolean);
 
@@ -1161,6 +1225,7 @@ export default function App() {
           </div>
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             {overCount>0 && <div style={{ background:"#FFEBEE", color:"#C62828", borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:800 }}>⚠️ {overCount} over budget</div>}
+            {syncing && <div style={{ background:"#E3F2FD", color:"#1565C0", borderRadius:8, padding:"4px 10px", fontSize:11, fontWeight:800 }}>⟳ sync</div>}
             <div style={{ background:"#FFF0EB", color:"#E8552A", borderRadius:8, padding:"4px 10px", fontSize:11, fontWeight:800 }}>UGX</div>
           </div>
         </div>
