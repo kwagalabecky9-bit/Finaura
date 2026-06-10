@@ -51,8 +51,8 @@ const DEFAULT_ACCOUNTS = [
   { id:"nssf",      name:"NSSF",           balance:0, color:"#283593", emoji:"🛡️" },
 ];
 
-const INC_SOURCES = ["Karveli Salary","Freelance","Investment Return","Kito Salary","Rental Income","Other"];
-const EXP_CATS    = ["Food & Groceries","Eating Out","Transport","Rent / Housing","Shopping","Health","Entertainment","Utilities","Phone / Data","Hair","Nails","Beauty","Savings Contributions","Gifting","Giving / Tithe","Loan Given","Other"];
+const INC_SOURCES = ["Karveli Salary","Freelance","Investment Return","Kito Salary","Rental Income","Loan Received","Other"];
+const EXP_CATS    = ["Food & Groceries","Eating Out","Transport","Rent / Housing","Shopping","Health","Entertainment","Utilities","Phone / Data","Hair","Nails","Beauty","Savings Contributions","Gifting","Giving / Tithe","Mobile Money Fees","Tips","Loan Given","Other"];
 const KITO_CATS   = ["Stock / Materials","Packaging","Transport","Marketing","Equipment","Labour","Other"];
 
 // Build bubble grid from image pattern — scaled to user's total
@@ -121,7 +121,7 @@ function Sheet({ open, onClose, title, children }) {
   );
 }
 
-function TxRow({ label, sub, right, rightColor="#333", tag, onDel }) {
+function TxRow({ label, sub, right, rightColor="#333", tag, onDel, onEdit }) {
   return (
     <div style={{ display:"flex", alignItems:"center", gap:8, padding:"11px 0", borderBottom:"1px solid #F0F0F0" }}>
       <div style={{ flex:1, minWidth:0 }}>
@@ -130,6 +130,7 @@ function TxRow({ label, sub, right, rightColor="#333", tag, onDel }) {
       </div>
       {tag && <span style={{ background:"#FFF3E0", color:"#E65100", borderRadius:20, padding:"2px 8px", fontSize:10, fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{tag}</span>}
       <div style={{ fontWeight:800, color:rightColor, fontSize:14, whiteSpace:"nowrap", flexShrink:0 }}>{right}</div>
+      {onEdit && <button onClick={onEdit} style={{ background:"#E3F2FD", border:"none", color:"#1565C0", borderRadius:"50%", width:26, height:26, cursor:"pointer", fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>✏️</button>}
       {onDel && <button onClick={onDel} style={{ background:"#FFEBEE", border:"none", color:"#E53935", borderRadius:"50%", width:26, height:26, cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>×</button>}
     </div>
   );
@@ -432,11 +433,44 @@ function Personal({ data, setData }) {
   const [eF, setEF] = useState({ date:today(), category:EXP_CATS[0], note:"", amount:"", accountId:"", isLoan:false });
   const [sF, setSF] = useState({ name:"", goal:"", current:"" });
 
+  const [editTx, setEditTx] = useState(null); // {type, tx}
+  const [editF, setEditF]   = useState({});
+
+  const openEdit = (type, tx) => {
+    setEditTx({type, tx});
+    setEditF({...tx});
+    setSheet("edit");
+  };
+
+  const saveEdit = () => {
+    if (!editF.amount || !editF.accountId) return;
+    const section = editTx.type === "income" ? "income" : "expenses";
+    const old = editTx.tx;
+    const acct = data.accounts.find(a=>a.id===editF.accountId);
+    // Reverse old balance effect
+    const isInc = editTx.type === "income";
+    let accounts = data.accounts.map(a => {
+      if (a.id === old.accountId) return {...a, balance: isInc ? +a.balance - +old.amount : +a.balance + +old.amount};
+      return a;
+    });
+    // Apply new balance effect
+    accounts = accounts.map(a => {
+      if (a.id === editF.accountId) return {...a, balance: isInc ? +a.balance + +editF.amount : +a.balance - +editF.amount};
+      return a;
+    });
+    const updated = {...editF, acctName: acct?.name||""};
+    const nd = {...data,
+      [section]: data[section].map(x => x.id === old.id ? updated : x),
+      accounts
+    };
+    save(nd); setData(nd); setSheet(null); setEditTx(null);
+  };
+
   const addIncome = () => {
     if (!iF.amount||!iF.accountId) return;
     const acct=data.accounts.find(a=>a.id===iF.accountId);
     let nd={...data,income:[{id:uid(),...iF,acctName:acct?.name||""},...data.income],accounts:data.accounts.map(a=>a.id===iF.accountId?{...a,balance:+a.balance+ +iF.amount}:a)};
-    if (iF.isBorrowed) nd.debts={...nd.debts,iOwe:[{id:uid(),name:iF.note||"Borrowed",amount:iF.amount,due:"",note:"From income log",paid:false},...nd.debts.iOwe]};
+    if (iF.isBorrowed || iF.source==="Loan Received") nd.debts={...nd.debts,iOwe:[{id:uid(),name:iF.note||"Loan",amount:iF.amount,due:"",note:"Added from income",paid:false,remaining:+iF.amount},...nd.debts.iOwe]};
     save(nd);setData(nd);setIF({date:today(),source:INC_SOURCES[0],note:"",amount:"",accountId:"",isBorrowed:false});setSheet(null);
   };
   const addExpense = () => {
@@ -493,7 +527,7 @@ function Personal({ data, setData }) {
             <div style={{ fontSize:26, fontWeight:900, color:"#2E7D32" }}>{fmt(totalIn)}</div>
           </div>
           <button style={btn("#2E7D32")} onClick={()=>setSheet("income")}>+ Add Income</button>
-          {data.income.length===0?<Empty text="No income recorded yet"/>:data.income.map(x=><TxRow key={x.id} label={x.source} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#2E7D32" tag={x.acctName} onDel={()=>delIncome(x.id,x.amount,x.accountId)}/>)}
+          {data.income.length===0?<Empty text="No income recorded yet"/>:data.income.map(x=><TxRow key={x.id} label={x.source} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#2E7D32" tag={x.acctName} onEdit={()=>openEdit("income",x)} onDel={()=>delIncome(x.id,x.amount,x.accountId)}/>)}
         </>}
         {sub==="expenses" && <>
           <div style={{ background:"#FFEBEE", borderRadius:16, padding:"14px 16px", marginBottom:14 }}>
@@ -501,7 +535,7 @@ function Personal({ data, setData }) {
             <div style={{ fontSize:26, fontWeight:900, color:"#C62828" }}>{fmt(totalOut)}</div>
           </div>
           <button style={btn("#C62828")} onClick={()=>setSheet("expense")}>+ Add Expense</button>
-          {data.expenses.length===0?<Empty text="No expenses yet"/>:data.expenses.map(x=><TxRow key={x.id} label={x.category} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#C62828" tag={x.acctName} onDel={()=>delExpense(x.id,x.amount,x.accountId)}/>)}
+          {data.expenses.length===0?<Empty text="No expenses yet"/>:data.expenses.map(x=><TxRow key={x.id} label={x.category} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#C62828" tag={x.acctName} onEdit={()=>openEdit("expense",x)} onDel={()=>delExpense(x.id,x.amount,x.accountId)}/>)}
         </>}
         {sub==="savings" && <>
           <button style={btn("#7B1FA2")} onClick={()=>setSheet("savings")}>+ New Goal</button>
@@ -588,6 +622,33 @@ function Personal({ data, setData }) {
         <label style={S.lbl}>Target Amount (UGX)</label><input style={S.inp} type="number" value={sF.goal} onChange={e=>setSF(f=>({...f,goal:e.target.value}))} placeholder="0"/>
         <label style={S.lbl}>Already Saved (UGX)</label><input style={S.inp} type="number" value={sF.current} onChange={e=>setSF(f=>({...f,current:e.target.value}))} placeholder="0"/>
         <button style={btn("#7B1FA2")} onClick={addSavings}>Create Goal</button>
+      </Sheet>
+
+      <Sheet open={sheet==="edit"} onClose={()=>{setSheet(null);setEditTx(null);}} title={`✏️ Edit ${editTx?.type==="income"?"Income":"Expense"}`}>
+        {editTx && <>
+          <label style={S.lbl}>Date</label>
+          <input style={S.inp} type="date" value={editF.date||""} onChange={e=>setEditF(f=>({...f,date:e.target.value}))}/>
+          {editTx.type==="income"
+            ? <><label style={S.lbl}>Source</label>
+                <select style={S.sel} value={editF.source||""} onChange={e=>setEditF(f=>({...f,source:e.target.value}))}>
+                  {INC_SOURCES.map(s=><option key={s}>{s}</option>)}
+                </select></>
+            : <><label style={S.lbl}>Category</label>
+                <select style={S.sel} value={editF.category||""} onChange={e=>setEditF(f=>({...f,category:e.target.value}))}>
+                  {[...EXP_CATS,...(data.customCats||[])].map(c=><option key={c}>{c}</option>)}
+                </select></>
+          }
+          <label style={S.lbl}>Account</label>
+          <select style={S.sel} value={editF.accountId||""} onChange={e=>setEditF(f=>({...f,accountId:e.target.value}))}>
+            <option value="">Select account…</option>
+            {data.accounts.map(a=><option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}
+          </select>
+          <label style={S.lbl}>Amount (UGX)</label>
+          <input style={S.inp} type="number" value={editF.amount||""} onChange={e=>setEditF(f=>({...f,amount:e.target.value}))}/>
+          <label style={S.lbl}>Note</label>
+          <input style={S.inp} type="text" value={editF.note||""} onChange={e=>setEditF(f=>({...f,note:e.target.value}))} placeholder="Optional"/>
+          <button style={btn("#1565C0")} onClick={saveEdit}>Save Changes</button>
+        </>}
       </Sheet>
 
       {/* ── RECURRING ── */}
@@ -812,6 +873,21 @@ function Debts({ data, setData }) {
           ))}
         </div>}
       </div>
+      <Sheet open={!!paySheet} onClose={()=>setPaySheet(null)} title="💸 Make a Payment">
+        {paySheet && <>
+          <div style={{ background:"#E8F5E9", borderRadius:12, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ fontWeight:700, color:"#2E7D32", fontSize:14 }}>{paySheet.name}</div>
+            <div style={{ color:"#999", fontSize:12, marginTop:2 }}>Outstanding: {fmt(paySheet.amount)}</div>
+          </div>
+          <label style={S.lbl}>Amount Paying Now (UGX)</label>
+          <input style={S.inp} type="number" value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder="0" autoFocus/>
+          <div style={{ color:"#999", fontSize:12, marginBottom:14 }}>
+            {payAmt ? `Remaining after: ${fmt(Math.max(0, +paySheet.amount - +payAmt))}` : "Enter amount to pay"}
+          </div>
+          <button style={btn("#2E7D32")} onClick={makePayment}>Record Payment</button>
+        </>}
+      </Sheet>
+
       <Sheet open={sheet==="add"} onClose={()=>setSheet(null)} title={`Add · ${sec.label}`}>
         <label style={S.lbl}>{sub==="business"?"Supplier / Lender":"Name"} *</label>
         <input style={S.inp} type="text" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Who?" autoFocus/>
@@ -830,14 +906,17 @@ function Debts({ data, setData }) {
 // ── SAVINGS CHALLENGE ─────────────────────────────────────────────────────────
 function Challenge({ data, setData }) {
   const [sheet, setSheet]   = useState(null);
-  const [cName, setCName]   = useState("");
-  const [cTotal, setCTotal] = useState("");
+  const [cName, setCName]       = useState("");
+  const [cTotal, setCTotal]     = useState("");
+  const [cBubbles, setCBubbles] = useState("100");
 
   const challenges = data.challenges || [];
 
   const createChallenge = () => {
     if (!cName||!cTotal) return;
-    const bubbles = buildBubbles(parseFloat(cTotal));
+    const numBubbles = Math.max(5, Math.min(200, parseInt(cBubbles)||100));
+    const perBubble = Math.round(parseFloat(cTotal) / numBubbles);
+    const bubbles = Array.from({ length: numBubbles }, (_, i) => ({ id: i, value: perBubble, done: false }));
     const nd = { ...data, challenges:[{ id:uid(), name:cName, total:parseFloat(cTotal), bubbles, createdAt:today() }, ...challenges] };
     save(nd);setData(nd);setCName("");setCTotal("");setSheet(null);
   };
@@ -929,8 +1008,10 @@ function Challenge({ data, setData }) {
         <input style={S.inp} type="text" value={cName} onChange={e=>setCName(e.target.value)} placeholder="e.g. Holiday Fund"/>
         <label style={S.lbl}>Total Amount to Save (UGX) *</label>
         <input style={S.inp} type="number" value={cTotal} onChange={e=>setCTotal(e.target.value)} placeholder="e.g. 500000"/>
+        <label style={S.lbl}>Number of Bubbles (5–200)</label>
+        <input style={S.inp} type="number" value={cBubbles} onChange={e=>setCBubbles(e.target.value)} placeholder="100"/>
         <div style={{ background:"#E8F5E9", borderRadius:12, padding:"10px 12px", marginBottom:14, fontSize:12, color:"#2E7D32" }}>
-          💡 We'll create a bubble grid like the image — tap each bubble as you save that amount!
+          💡 Each bubble = {cTotal && cBubbles ? fmt(Math.round(parseFloat(cTotal||0)/Math.max(1,parseInt(cBubbles||100)))) : "UGX 0"}. Tap each one as you save it!
         </div>
         <button style={btn("#00695C")} onClick={createChallenge}>Create Challenge</button>
       </Sheet>
