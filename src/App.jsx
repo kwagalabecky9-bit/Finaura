@@ -1144,8 +1144,9 @@ function Reports({ data }) {
     return Array.from(keys).sort().reverse();
   }, [data]);
 
-  const [month, setMonth] = useState(allMonths[0]||monthKey(today()));
-  const [view,  setView]  = useState("overview");
+  const [month,    setMonth]    = useState(allMonths[0]||monthKey(today()));
+  const [view,     setView]     = useState("overview");
+  const [expanded, setExpanded] = useState(null); // currently drilled-down category
 
   const f=(arr)=>arr.filter(x=>monthKey(x.date)===month);
   const mInc=f(data.income), mExp=f(data.expenses), mKS=f(data.kSales), mKE=f(data.kExpenses);
@@ -1155,69 +1156,165 @@ function Reports({ data }) {
   const kitoExp=mKE.reduce((s,x)=>s+ +x.amount,0);
   const budgets = data.budgets || {};
 
-  const expByCat=EXP_CATS.map(cat=>({cat,total:mExp.filter(x=>x.category===cat).reduce((s,x)=>s+ +x.amount,0),budget:budgets[cat]||0})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+  const allExpCats = [...EXP_CATS,...(data.customCats||[])];
+  const expByCat=allExpCats.map(cat=>({cat,total:mExp.filter(x=>x.category===cat).reduce((s,x)=>s+ +x.amount,0),budget:budgets[cat]||0})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   const incBySrc=INC_SOURCES.map(src=>({src,total:mInc.filter(x=>x.source===src).reduce((s,x)=>s+ +x.amount,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   const kitoByCat=KITO_CATS.map(cat=>({cat,total:mKE.filter(x=>x.category===cat).reduce((s,x)=>s+ +x.amount,0)})).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
   const maxExp=expByCat[0]?.total||1, maxInc=incBySrc[0]?.total||1, maxKit=kitoByCat[0]?.total||1;
   const COLORS=["#E8552A","#2A7BE8","#2E7D32","#7B1FA2","#F57F17","#C62828","#00695C","#283593","#E91E8C","#00897B","#FF8C00"];
 
+  const toggle = (key) => setExpanded(e => e===key ? null : key);
+
+  // Drill-down list component
+  const DrillDown = ({ items, color, emptyText }) => (
+    <div style={{ background:"#FAFAFA", borderRadius:10, margin:"8px 0 4px", overflow:"hidden",
+      border:"1px solid #F0F0F0" }}>
+      {items.length===0
+        ? <div style={{ padding:"10px 14px", color:"#BBB", fontSize:12 }}>{emptyText}</div>
+        : items.map((tx,i) => (
+          <div key={tx.id||i} style={{ display:"flex", alignItems:"center", gap:8,
+            padding:"9px 14px", borderBottom: i<items.length-1?"1px solid #F0F0F0":"none",
+            background: i%2===0?"#FAFAFA":"#FFF" }}>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:13, color:"#333", fontWeight:500,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {tx.note || tx.source || tx.category || "—"}
+              </div>
+              <div style={{ fontSize:11, color:"#999", marginTop:1 }}>
+                {tx.date}{tx.acctName ? " · " + tx.acctName : ""}
+              </div>
+            </div>
+            <div style={{ fontWeight:800, color, fontSize:13, whiteSpace:"nowrap" }}>
+              {fmt(tx.amount)}
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  );
+
   return (
     <>
       <div style={{ padding:"14px 16px 0" }}>
         <label style={S.lbl}>Select Month</label>
-        <select style={S.sel} value={month} onChange={e=>setMonth(e.target.value)}>
+        <select style={S.sel} value={month} onChange={e=>{setMonth(e.target.value);setExpanded(null);}}>
           {allMonths.length===0?<option value={monthKey(today())}>{monthLabel(monthKey(today()))}</option>:allMonths.map(m=><option key={m} value={m}>{monthLabel(m)}</option>)}
         </select>
       </div>
-      <SubTabs tabs={["overview","expenses","income","kito"]} active={view} onChange={setView} color="#2A7BE8"/>
+      <SubTabs tabs={["overview","expenses","income","kito"]} active={view} onChange={v=>{setView(v);setExpanded(null);}} color="#2A7BE8"/>
       <div style={S.pad}>
         {view==="overview"&&<>
           <div style={{ display:"flex", gap:8, marginBottom:10 }}><StatBox label="Income" value={totalIn} bg="#E8F5E9" color="#2E7D32"/><StatBox label="Spent" value={totalOut} bg="#FFEBEE" color="#C62828"/></div>
           <div style={{ display:"flex", gap:8, marginBottom:14 }}><StatBox label="Net Personal" value={totalIn-totalOut} bg={totalIn-totalOut>=0?"#E8F5E9":"#FFEBEE"} color={totalIn-totalOut>=0?"#2E7D32":"#C62828"}/><StatBox label="Kito Profit" value={kitoSales-kitoExp} bg={kitoSales-kitoExp>=0?"#FFF8E1":"#FFEBEE"} color={kitoSales-kitoExp>=0?"#F57F17":"#C62828"}/></div>
           {allMonths.length===0&&<Empty text="Add transactions to see monthly reports"/>}
         </>}
+
         {view==="expenses"&&<>
-          <div style={{ background:"#FFEBEE", borderRadius:16, padding:"12px 14px", marginBottom:14 }}><div style={{ fontSize:11, color:"#C62828", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Total Spent</div><div style={{ fontSize:22, fontWeight:900, color:"#C62828" }}>{fmt(totalOut)}</div></div>
+          <div style={{ background:"#FFEBEE", borderRadius:16, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ fontSize:11, color:"#C62828", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Total Spent</div>
+            <div style={{ fontSize:22, fontWeight:900, color:"#C62828" }}>{fmt(totalOut)}</div>
+          </div>
+          <div style={{ fontSize:11, color:"#999", marginBottom:10, textAlign:"center" }}>Tap any category to see the transactions inside</div>
           {expByCat.length===0?<Empty text="No expenses this month"/>:expByCat.map((x,i)=>{
             const over = x.budget > 0 && x.total > x.budget;
             const barW = x.budget > 0 ? Math.min(100,(x.total/x.budget)*100) : (x.total/maxExp*100);
             const barC = x.budget===0 ? COLORS[i%COLORS.length] : over ? "#C62828" : x.total/x.budget > 0.8 ? "#F57F17" : "#2E7D32";
+            const isOpen = expanded === x.cat;
+            const txItems = mExp.filter(tx=>tx.category===x.cat).sort((a,b)=>b.date.localeCompare(a.date));
             return (
-              <div key={x.cat} style={{ marginBottom:14, background: over?"#FFF5F5":"transparent", borderRadius:12, padding: over?"10px":"0" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                  <span style={{ fontSize:13, fontWeight:600, color:"#333" }}>{x.cat}</span>
+              <div key={x.cat} style={{ marginBottom:10, background: over?"#FFF5F5":isOpen?"#F8F8F8":"transparent",
+                borderRadius:14, padding:"12px", border: isOpen?`1.5px solid ${COLORS[i%COLORS.length]}33`:"1.5px solid transparent",
+                cursor:"pointer" }} onClick={()=>toggle(x.cat)}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:"#333" }}>{x.cat}</span>
+                    <span style={{ fontSize:10, color:COLORS[i%COLORS.length], background:COLORS[i%COLORS.length]+"18",
+                      borderRadius:20, padding:"1px 6px", fontWeight:600 }}>{txItems.length}</span>
+                  </div>
                   <div style={{ display:"flex", gap:6, alignItems:"center" }}>
                     {over && <span style={{ background:"#FFEBEE", color:"#C62828", borderRadius:20, padding:"1px 6px", fontSize:10, fontWeight:700 }}>OVER!</span>}
                     <span style={{ fontSize:13, fontWeight:800, color: over?"#C62828":"#333" }}>{fmt(x.total)}</span>
+                    <span style={{ fontSize:12, color:"#999" }}>{isOpen?"▲":"▼"}</span>
                   </div>
                 </div>
-                <div style={{ background:"#F0F0F0", borderRadius:6, height:10 }}><div style={{ width:barW+"%", height:10, borderRadius:6, background:barC }}/></div>
-                <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+                <div style={{ background:"#F0F0F0", borderRadius:6, height:8 }}>
+                  <div style={{ width:barW+"%", height:8, borderRadius:6, background:barC }}/>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
                   <span style={{ fontSize:11, color:"#999" }}>{Math.round(x.total/totalOut*100)}% of spending</span>
                   {x.budget > 0 && <span style={{ fontSize:11, color: over?"#C62828":"#2E7D32", fontWeight:600 }}>Budget: {fmt(x.budget)}</span>}
                 </div>
+                {isOpen && <DrillDown items={txItems} color="#C62828" emptyText="No transactions"/>}
               </div>
             );
           })}
         </>}
+
         {view==="income"&&<>
-          <div style={{ background:"#E8F5E9", borderRadius:16, padding:"12px 14px", marginBottom:14 }}><div style={{ fontSize:11, color:"#2E7D32", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Total Income</div><div style={{ fontSize:22, fontWeight:900, color:"#2E7D32" }}>{fmt(totalIn)}</div></div>
-          {incBySrc.length===0?<Empty text="No income this month"/>:incBySrc.map((x,i)=>(
-            <div key={x.src} style={{ marginBottom:14 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}><span style={{ fontSize:13, fontWeight:600, color:"#333" }}>{x.src}</span><span style={{ fontSize:13, fontWeight:800, color:"#2E7D32" }}>{fmt(x.total)}</span></div>
-              <div style={{ background:"#F0F0F0", borderRadius:6, height:10 }}><div style={{ width:(x.total/maxInc*100)+"%", height:10, borderRadius:6, background:COLORS[i%COLORS.length] }}/></div>
-              <div style={{ fontSize:11, color:"#999", marginTop:2 }}>{Math.round(x.total/totalIn*100)}% of income</div>
-            </div>
-          ))}
+          <div style={{ background:"#E8F5E9", borderRadius:16, padding:"12px 14px", marginBottom:14 }}>
+            <div style={{ fontSize:11, color:"#2E7D32", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>Total Income</div>
+            <div style={{ fontSize:22, fontWeight:900, color:"#2E7D32" }}>{fmt(totalIn)}</div>
+          </div>
+          <div style={{ fontSize:11, color:"#999", marginBottom:10, textAlign:"center" }}>Tap any source to see the transactions inside</div>
+          {incBySrc.length===0?<Empty text="No income this month"/>:incBySrc.map((x,i)=>{
+            const isOpen = expanded === x.src;
+            const txItems = mInc.filter(tx=>tx.source===x.src).sort((a,b)=>b.date.localeCompare(a.date));
+            return (
+              <div key={x.src} style={{ marginBottom:10, background:isOpen?"#F8FFF8":"transparent",
+                borderRadius:14, padding:"12px", border: isOpen?`1.5px solid ${COLORS[i%COLORS.length]}33`:"1.5px solid transparent",
+                cursor:"pointer" }} onClick={()=>toggle(x.src)}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:"#333" }}>{x.src}</span>
+                    <span style={{ fontSize:10, color:COLORS[i%COLORS.length], background:COLORS[i%COLORS.length]+"18",
+                      borderRadius:20, padding:"1px 6px", fontWeight:600 }}>{txItems.length}</span>
+                  </div>
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontSize:13, fontWeight:800, color:"#2E7D32" }}>{fmt(x.total)}</span>
+                    <span style={{ fontSize:12, color:"#999" }}>{isOpen?"▲":"▼"}</span>
+                  </div>
+                </div>
+                <div style={{ background:"#F0F0F0", borderRadius:6, height:8 }}>
+                  <div style={{ width:(x.total/maxInc*100)+"%", height:8, borderRadius:6, background:COLORS[i%COLORS.length] }}/>
+                </div>
+                <div style={{ fontSize:11, color:"#999", marginTop:4 }}>{Math.round(x.total/totalIn*100)}% of income</div>
+                {isOpen && <DrillDown items={txItems} color="#2E7D32" emptyText="No transactions"/>}
+              </div>
+            );
+          })}
         </>}
+
         {view==="kito"&&<>
-          <div style={{ display:"flex", gap:8, marginBottom:14 }}><StatBox label="Kito Sales" value={kitoSales} bg="#E8F5E9" color="#2E7D32"/><StatBox label="Kito Costs" value={kitoExp} bg="#FFEBEE" color="#C62828"/></div>
-          {kitoByCat.length===0?<Empty text="No Kito expenses this month"/>:kitoByCat.map((x,i)=>(
-            <div key={x.cat} style={{ marginBottom:14 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}><span style={{ fontSize:13, fontWeight:600, color:"#333" }}>{x.cat}</span><span style={{ fontSize:13, fontWeight:800, color:"#F57F17" }}>{fmt(x.total)}</span></div>
-              <div style={{ background:"#F0F0F0", borderRadius:6, height:10 }}><div style={{ width:(x.total/maxKit*100)+"%", height:10, borderRadius:6, background:COLORS[i%COLORS.length] }}/></div>
-            </div>
-          ))}
+          <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+            <StatBox label="Kito Sales" value={kitoSales} bg="#E8F5E9" color="#2E7D32"/>
+            <StatBox label="Kito Costs" value={kitoExp} bg="#FFEBEE" color="#C62828"/>
+          </div>
+          <div style={{ fontSize:11, color:"#999", marginBottom:10, textAlign:"center" }}>Tap any category to see transactions</div>
+          {kitoByCat.length===0?<Empty text="No Kito expenses this month"/>:kitoByCat.map((x,i)=>{
+            const isOpen = expanded === "kito_"+x.cat;
+            const txItems = mKE.filter(tx=>tx.category===x.cat).sort((a,b)=>b.date.localeCompare(a.date));
+            return (
+              <div key={x.cat} style={{ marginBottom:10, background:isOpen?"#FFFAF0":"transparent",
+                borderRadius:14, padding:"12px", border: isOpen?`1.5px solid ${COLORS[i%COLORS.length]}33`:"1.5px solid transparent",
+                cursor:"pointer" }} onClick={()=>toggle("kito_"+x.cat)}>
+                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:13, fontWeight:700, color:"#333" }}>{x.cat}</span>
+                    <span style={{ fontSize:10, color:COLORS[i%COLORS.length], background:COLORS[i%COLORS.length]+"18",
+                      borderRadius:20, padding:"1px 6px", fontWeight:600 }}>{txItems.length}</span>
+                  </div>
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontSize:13, fontWeight:800, color:"#F57F17" }}>{fmt(x.total)}</span>
+                    <span style={{ fontSize:12, color:"#999" }}>{isOpen?"▲":"▼"}</span>
+                  </div>
+                </div>
+                <div style={{ background:"#F0F0F0", borderRadius:6, height:8 }}>
+                  <div style={{ width:(x.total/maxKit*100)+"%", height:8, borderRadius:6, background:COLORS[i%COLORS.length] }}/>
+                </div>
+                {isOpen && <DrillDown items={txItems.map(t=>({...t,amount:t.amount,note:t.note||t.category}))} color="#F57F17" emptyText="No transactions"/>}
+              </div>
+            );
+          })}
         </>}
       </div>
     </>
