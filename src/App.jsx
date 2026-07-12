@@ -51,8 +51,8 @@ const DEFAULT_ACCOUNTS = [
   { id:"nssf",      name:"NSSF",           balance:0, color:"#283593", emoji:"🛡️" },
 ];
 
-const INC_SOURCES = ["Karveli Salary","Freelance","Investment Return","Kito Salary","Rental Income","Loan Received","Other"];
-const EXP_CATS    = ["Food & Groceries","Eating Out","Transport","Rent / Housing","Shopping","Health","Entertainment","Utilities","Phone / Data","Hair","Nails","Beauty","Savings Contributions","Gifting","Giving / Tithe","Mobile Money Fees","Tips","Loan Given","Other"];
+const INC_SOURCES = ["Karveli Salary","TS27 Salary","Freelance","Investment Return","Kito Salary","Rental Income","Loan Received","Bonus","Gifts","Tips","Other"];
+const EXP_CATS    = ["Food & Groceries","Eating Out","Transport","Rent / Housing","Shopping","SHEIN","Health","Entertainment","Utilities","Phone / Data","Hair","Nails","Beauty","Laundry","House Cleaning","Delivery Fees","Savings Contributions","Gifting","Giving / Tithe","Mobile Money Fees","Loan Given","Other"];
 const KITO_CATS   = ["Stock / Materials","Packaging","Transport","Marketing","Equipment","Labour","Other"];
 
 // Build bubble grid from image pattern — scaled to user's total
@@ -811,83 +811,171 @@ function Kito({ data, setData }) {
 
 // ── DEBTS ─────────────────────────────────────────────────────────────────────
 function Debts({ data, setData }) {
-  const [sub, setSub]     = useState("iOwe");
-  const [sheet, setSheet] = useState(null);
-  const [form, setForm]   = useState({ name:"", amount:"", due:"", note:"" });
+  const [sub,      setSub]      = useState("iOwe");
+  const [sheet,    setSheet]    = useState(null);
+  const [form,     setForm]     = useState({ name:"", amount:"", due:"", note:"" });
+  const [paySheet, setPaySheet] = useState(null);
+  const [payAmt,   setPayAmt]   = useState("");
+  const [expanded, setExpanded] = useState(null);
 
   const SECS = {
-    iOwe:     { label:"I Owe",        color:"#C62828", bg:"#FFEBEE", emoji:"😬" },
-    owedMe:   { label:"Owed to Me",   color:"#2E7D32", bg:"#E8F5E9", emoji:"🙌" },
-    business: { label:"Business Debt",color:"#F57F17", bg:"#FFF8E1", emoji:"🏪" },
+    iOwe:     { label:"I Owe",         color:"#C62828", bg:"#FFEBEE", emoji:"😬" },
+    owedMe:   { label:"Owed to Me",    color:"#2E7D32", bg:"#E8F5E9", emoji:"🙌" },
+    business: { label:"Business Debt", color:"#F57F17", bg:"#FFF8E1", emoji:"🏪" },
   };
-  const sec   = SECS[sub];
-  const items  = data.debts[sub]||[];
+  const sec    = SECS[sub];
+  const items  = data.debts[sub] || [];
   const unpaid = items.filter(x=>!x.paid);
   const paid   = items.filter(x=>x.paid);
-  const total  = unpaid.reduce((s,x)=>s+ +x.amount,0);
+  const total  = unpaid.reduce((s,x)=>s+ +x.amount, 0);
 
   const addDebt = () => {
     if (!form.name||!form.amount) return;
     const nd={...data,debts:{...data.debts,[sub]:[{id:uid(),...form,paid:false},...data.debts[sub]]}};
     save(nd);setData(nd);setForm({name:"",amount:"",due:"",note:""});setSheet(null);
   };
-  const toggle=(id)=>{ const nd={...data,debts:{...data.debts,[sub]:data.debts[sub].map(x=>x.id===id?{...x,paid:!x.paid}:x)}};save(nd);setData(nd); };
-  const del=(id)=>{ const nd={...data,debts:{...data.debts,[sub]:data.debts[sub].filter(x=>x.id!==id)}};save(nd);setData(nd); };
+
+  const toggle = (id) => {
+    const nd={...data,debts:{...data.debts,[sub]:data.debts[sub].map(x=>x.id===id?{...x,paid:!x.paid}:x)}};
+    save(nd);setData(nd);
+  };
+
+  const del = (id) => {
+    const nd={...data,debts:{...data.debts,[sub]:data.debts[sub].filter(x=>x.id!==id)}};
+    save(nd);setData(nd);
+  };
+
+  const openPay = (e, x) => {
+    e.stopPropagation();
+    setPaySheet(x);
+    setPayAmt("");
+  };
+
+  const makePayment = () => {
+    if (!payAmt||!paySheet) return;
+    const amt = parseFloat(payAmt);
+    const nd = {...data, debts:{...data.debts,[sub]:data.debts[sub].map(x=>{
+      if (x.id!==paySheet.id) return x;
+      const remaining = +x.amount - amt;
+      return remaining<=0
+        ? {...x, amount:0, paid:true}
+        : {...x, amount:remaining, note:(x.note||"")+` | Paid ${fmt(amt)} on ${today()}`};
+    })}};
+    save(nd);setData(nd);setPaySheet(null);setPayAmt("");
+  };
 
   return (
     <>
+      {/* Section tabs */}
       <div style={{ display:"flex", gap:8, padding:"14px 16px 8px" }}>
         {Object.entries(SECS).map(([k,s])=>(
-          <button key={k} onClick={()=>setSub(k)} style={{ flex:1, padding:"9px 4px", borderRadius:12, border:"none", background:sub===k?s.color:"#fff", color:sub===k?"#fff":"#999", fontWeight:700, fontSize:11, cursor:"pointer", boxShadow:sub===k?`0 2px 8px ${s.color}44`:"none" }}>
+          <button key={k} onClick={()=>{setSub(k);setExpanded(null);}} style={{ flex:1, padding:"9px 4px", borderRadius:12, border:"none", background:sub===k?s.color:"#fff", color:sub===k?"#fff":"#999", fontWeight:700, fontSize:11, cursor:"pointer", boxShadow:sub===k?`0 2px 8px ${s.color}44`:"none" }}>
             {s.emoji} {s.label}
           </button>
         ))}
       </div>
+
       <div style={S.pad}>
+        {/* Total outstanding */}
         <div style={{ background:sec.bg, borderRadius:16, padding:"14px 16px", marginBottom:14 }}>
           <div style={{ fontSize:11, color:sec.color, fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:4 }}>Outstanding · {sec.label}</div>
           <div style={{ fontSize:26, fontWeight:900, color:sec.color }}>{fmt(total)}</div>
+          <div style={{ fontSize:12, color:sec.color+"99", marginTop:4 }}>{unpaid.length} entr{unpaid.length===1?"y":"ies"} · tap any to see details</div>
         </div>
+
         <button style={btn(sec.color)} onClick={()=>setSheet("add")}>+ Add Entry</button>
-        {unpaid.length===0?<Empty text="All clear! 🎉"/>:unpaid.map(x=>(
-          <div key={x.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:"1px solid #F0F0F0" }}>
-            <button onClick={()=>toggle(x.id)} style={{ width:26, height:26, borderRadius:"50%", border:`2.5px solid ${sec.color}`, background:"none", cursor:"pointer", flexShrink:0 }}/>
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontWeight:700, color:"#1A1A1A", fontSize:14 }}>{x.name}</div>
-              {x.note&&<div style={{ color:"#999", fontSize:11 }}>{x.note}</div>}
-              {x.due&&<div style={{ color:"#F57F17", fontSize:11, fontWeight:600 }}>Due {x.due}</div>}
-            </div>
-            <div style={{ fontWeight:800, color:sec.color, fontSize:14 }}>{fmt(x.amount)}</div>
-            <button onClick={()=>del(x.id)} style={{ background:"#FFEBEE", border:"none", color:"#E53935", borderRadius:"50%", width:26, height:26, cursor:"pointer", fontSize:14, display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+
+        {/* Unpaid entries */}
+        {unpaid.length===0
+          ? <Empty text="All clear! 🎉"/>
+          : unpaid.map(x=>{
+              const isOpen = expanded===x.id;
+              return (
+                <div key={x.id} style={{ borderRadius:14, marginBottom:8,
+                  background: isOpen?sec.bg+"55":"#fff",
+                  border:`1.5px solid ${isOpen?sec.color+"44":"#F0F0F0"}`,
+                  overflow:"hidden" }}>
+                  {/* Main row — tappable */}
+                  <div onClick={()=>setExpanded(e=>e===x.id?null:x.id)}
+                    style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", cursor:"pointer" }}>
+                    <button onClick={e=>{e.stopPropagation();toggle(x.id);}}
+                      style={{ width:26, height:26, borderRadius:"50%", border:`2.5px solid ${sec.color}`,
+                        background:"none", cursor:"pointer", flexShrink:0 }}/>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontWeight:700, color:"#1A1A1A", fontSize:14 }}>{x.name}</div>
+                      {x.due && <div style={{ color:"#F57F17", fontSize:11, fontWeight:600 }}>Due {x.due}</div>}
+                    </div>
+                    <div style={{ fontWeight:800, color:sec.color, fontSize:15 }}>{fmt(x.amount)}</div>
+                    <span style={{ fontSize:11, color:"#999" }}>{isOpen?"▲":"▼"}</span>
+                  </div>
+
+                  {/* Expanded detail */}
+                  {isOpen && (
+                    <div style={{ padding:"0 14px 14px" }}>
+                      {x.note && (
+                        <div style={{ background:"#fff", borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+                          <div style={{ fontSize:10, color:"#999", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:3 }}>Note</div>
+                          <div style={{ fontSize:13, color:"#333" }}>{x.note}</div>
+                        </div>
+                      )}
+                      <div style={{ background:"#fff", borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+                        <div style={{ fontSize:10, color:"#999", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:3 }}>Amount</div>
+                        <div style={{ fontSize:18, fontWeight:900, color:sec.color }}>{fmt(x.amount)}</div>
+                      </div>
+                      {x.due && (
+                        <div style={{ background:"#FFF8E1", borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+                          <div style={{ fontSize:10, color:"#F57F17", fontWeight:700, textTransform:"uppercase", letterSpacing:1, marginBottom:3 }}>Due Date</div>
+                          <div style={{ fontSize:13, color:"#F57F17", fontWeight:700 }}>{x.due}</div>
+                        </div>
+                      )}
+                      <div style={{ display:"flex", gap:8 }}>
+                        <button onClick={e=>openPay(e,x)} style={{ flex:1, background:"#E8F5E9", border:"none", color:"#2E7D32", borderRadius:10, padding:"10px", fontWeight:700, fontSize:13, cursor:"pointer" }}>💸 Pay Partial</button>
+                        <button onClick={e=>{e.stopPropagation();toggle(x.id);}} style={{ flex:1, background:sec.bg, border:`1.5px solid ${sec.color}`, color:sec.color, borderRadius:10, padding:"10px", fontWeight:700, fontSize:13, cursor:"pointer" }}>✓ Mark Settled</button>
+                        <button onClick={e=>{e.stopPropagation();del(x.id);}} style={{ background:"#FFEBEE", border:"none", color:"#E53935", borderRadius:10, padding:"10px 14px", fontWeight:700, fontSize:13, cursor:"pointer" }}>×</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+        }
+
+        {/* Settled */}
+        {paid.length>0 && (
+          <div style={{ marginTop:16 }}>
+            <div style={{ fontSize:11, color:"#999", fontWeight:700, textTransform:"uppercase", letterSpacing:1.2, marginBottom:8 }}>Settled ✓</div>
+            {paid.map(x=>(
+              <div key={x.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0",
+                borderBottom:"1px solid #F5F5F5", opacity:0.5 }}>
+                <button onClick={()=>toggle(x.id)} style={{ width:26, height:26, borderRadius:"50%", border:"none",
+                  background:"#2E7D32", cursor:"pointer", color:"#fff", fontSize:14, flexShrink:0,
+                  display:"flex", alignItems:"center", justifyContent:"center" }}>✓</button>
+                <div style={{ flex:1, color:"#999", fontSize:13, textDecoration:"line-through" }}>{x.name}</div>
+                <div style={{ color:"#999", fontSize:13 }}>{fmt(x.amount)}</div>
+                <button onClick={()=>del(x.id)} style={{ background:"none", border:"none", color:"#CCC", cursor:"pointer", fontSize:18 }}>×</button>
+              </div>
+            ))}
           </div>
-        ))}
-        {paid.length>0&&<div style={{ marginTop:20 }}>
-          <div style={{ fontSize:11, color:"#999", fontWeight:700, textTransform:"uppercase", letterSpacing:1.2, marginBottom:8 }}>Settled ✓</div>
-          {paid.map(x=>(
-            <div key={x.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 0", borderBottom:"1px solid #F5F5F5", opacity:0.5 }}>
-              <button onClick={()=>toggle(x.id)} style={{ width:26, height:26, borderRadius:"50%", border:"none", background:"#2E7D32", cursor:"pointer", color:"#fff", fontSize:14, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>✓</button>
-              <div style={{ flex:1, color:"#999", fontSize:13, textDecoration:"line-through" }}>{x.name}</div>
-              <div style={{ color:"#999", fontSize:13 }}>{fmt(x.amount)}</div>
-              <button onClick={()=>del(x.id)} style={{ background:"none", border:"none", color:"#CCC", cursor:"pointer", fontSize:18 }}>×</button>
-            </div>
-          ))}
-        </div>}
+        )}
       </div>
+
+      {/* Partial payment sheet */}
       <Sheet open={!!paySheet} onClose={()=>setPaySheet(null)} title="💸 Make a Payment">
         {paySheet && <>
           <div style={{ background:"#E8F5E9", borderRadius:12, padding:"12px 14px", marginBottom:14 }}>
             <div style={{ fontWeight:700, color:"#2E7D32", fontSize:14 }}>{paySheet.name}</div>
             <div style={{ color:"#999", fontSize:12, marginTop:2 }}>Outstanding: {fmt(paySheet.amount)}</div>
           </div>
-          <label style={S.lbl}>Amount Paying Now (UGX)</label>
+          <label style={S.lbl}>Amount Paying Now (UGX) *</label>
           <input style={S.inp} type="number" value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder="0" autoFocus/>
-          <div style={{ color:"#999", fontSize:12, marginBottom:14 }}>
-            {payAmt ? `Remaining after: ${fmt(Math.max(0, +paySheet.amount - +payAmt))}` : "Enter amount to pay"}
-          </div>
+          {payAmt && <div style={{ color:"#2E7D32", fontSize:13, fontWeight:600, marginBottom:14 }}>
+            Remaining after this payment: {fmt(Math.max(0, +paySheet.amount - +payAmt))}
+          </div>}
           <button style={btn("#2E7D32")} onClick={makePayment}>Record Payment</button>
         </>}
       </Sheet>
 
+      {/* Add debt sheet */}
       <Sheet open={sheet==="add"} onClose={()=>setSheet(null)} title={`Add · ${sec.label}`}>
         <label style={S.lbl}>{sub==="business"?"Supplier / Lender":"Name"} *</label>
         <input style={S.inp} type="text" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Who?" autoFocus/>
