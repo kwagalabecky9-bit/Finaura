@@ -140,6 +140,46 @@ function Empty({ text }) {
   return <div style={{ textAlign:"center", padding:"28px 0", color:"#BBB" }}><div style={{ fontSize:30, marginBottom:8 }}>📭</div><div style={{ fontSize:13 }}>{text}</div></div>;
 }
 
+// Group transactions by month then sort by date within each month
+function groupByMonth(items) {
+  const groups = {};
+  items.forEach(x => {
+    const mk = x.date ? x.date.slice(0,7) : "unknown";
+    if (!groups[mk]) groups[mk] = [];
+    groups[mk].push(x);
+  });
+  // Sort months newest first, dates within month newest first
+  return Object.entries(groups)
+    .sort(([a],[b]) => b.localeCompare(a))
+    .map(([mk, txs]) => ({
+      mk,
+      label: mk === "unknown" ? "Unknown Date" : new Date(mk+"-01").toLocaleString("default",{month:"long",year:"numeric"}),
+      txs: txs.sort((a,b) => (b.date||"").localeCompare(a.date||"")),
+      total: txs.reduce((s,x)=>s+ +x.amount,0)
+    }));
+}
+
+function MonthGroup({ label, total, color, bg, children }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div style={{ marginBottom:16 }}>
+      <div onClick={()=>setOpen(o=>!o)} style={{ display:"flex", justifyContent:"space-between",
+        alignItems:"center", background:bg, borderRadius:12, padding:"10px 14px",
+        cursor:"pointer", marginBottom: open?8:0 }}>
+        <div>
+          <div style={{ fontWeight:800, color, fontSize:13 }}>{label}</div>
+          <div style={{ fontSize:11, color:color+"99", marginTop:1 }}>{open?"tap to collapse":"tap to expand"}</div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ fontWeight:900, color, fontSize:15 }}>{total}</div>
+          <span style={{ color, fontSize:12 }}>{open?"▲":"▼"}</span>
+        </div>
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
 function SubTabs({ tabs, active, onChange, color="#E8552A" }) {
   return (
     <div style={{ display:"flex", gap:8, padding:"14px 16px 8px" }}>
@@ -160,6 +200,145 @@ function StatBox({ label, value, bg, color }) {
 }
 
 // ── HOME ──────────────────────────────────────────────────────────────────────
+// ── NET WORTH GRAPH ───────────────────────────────────────────────────────────
+function NetWorthGraph({ data, currentTotal }) {
+  // Build monthly net worth from income/expense history
+  // We use income - expenses per month as a proxy for net change
+  // and show cumulative picture month by month
+  const points = useMemo(() => {
+    const allTx = [
+      ...data.income.map(x=>({date:x.date, amt:+x.amount})),
+      ...data.expenses.map(x=>({date:x.date, amt:- +x.amount})),
+      ...data.kSales.map(x=>({date:x.date, amt:+x.price* +x.qty})),
+      ...data.kExpenses.map(x=>({date:x.date, amt:- +x.amount})),
+    ].filter(x=>x.date);
+
+    if (allTx.length === 0) return [];
+
+    // Group net change by month
+    const byMonth = {};
+    allTx.forEach(x => {
+      const mk = x.date.slice(0,7);
+      byMonth[mk] = (byMonth[mk]||0) + x.amt;
+    });
+
+    // Sort months
+    const months = Object.keys(byMonth).sort();
+    if (months.length === 0) return [];
+
+    // Build cumulative — start from (currentTotal - sum of all recorded changes)
+    const totalRecorded = Object.values(byMonth).reduce((s,v)=>s+v,0);
+    let running = currentTotal - totalRecorded;
+
+    return months.map(mk => {
+      running += byMonth[mk];
+      return {
+        mk,
+        label: new Date(mk+"-01").toLocaleString("default",{month:"short",year:"2-digit"}),
+        value: running,
+      };
+    });
+  }, [data, currentTotal]);
+
+  if (points.length < 2) {
+    return (
+      <div style={{ margin:"0 16px 12px", background:"#fff", borderRadius:16, padding:"16px" }}>
+        <div style={{ fontSize:13, fontWeight:800, color:"#333", marginBottom:6 }}>📈 Net Worth Over Time</div>
+        <div style={{ color:"#BBB", fontSize:12, textAlign:"center", padding:"16px 0" }}>
+          Keep logging for a month to see your growth graph here 🌱
+        </div>
+      </div>
+    );
+  }
+
+  const W = 358; // chart width (fits 390px phone with 16px padding each side)
+  const H = 110;
+  const PAD = { top:12, right:8, bottom:28, left:8 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+
+  const vals   = points.map(p=>p.value);
+  const minVal = Math.min(...vals);
+  const maxVal = Math.max(...vals);
+  const range  = maxVal - minVal || 1;
+
+  const xStep = cW / Math.max(points.length - 1, 1);
+  const toX   = i  => PAD.left + i * xStep;
+  const toY   = v  => PAD.top + cH - ((v - minVal) / range) * cH;
+
+  // Build SVG polyline path
+  const pathD = points.map((p,i) => `${i===0?"M":"L"}${toX(i).toFixed(1)},${toY(p.value).toFixed(1)}`).join(" ");
+
+  // Fill area under line
+  const fillD = pathD + ` L${toX(points.length-1).toFixed(1)},${(PAD.top+cH).toFixed(1)} L${PAD.left.toFixed(1)},${(PAD.top+cH).toFixed(1)} Z`;
+
+  const isGrowing = points[points.length-1].value >= points[0].value;
+  const lineColor = isGrowing ? "#2E7D32" : "#C62828";
+  const fillColor = isGrowing ? "#2E7D3222" : "#C6282822";
+
+  // Show only first, last, and a few middle labels
+  const labelEvery = Math.ceil(points.length / 4);
+
+  return (
+    <div style={{ margin:"0 16px 12px", background:"#fff", borderRadius:16, padding:"14px 16px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+        <div>
+          <div style={{ fontSize:13, fontWeight:800, color:"#333" }}>📈 Net Worth Over Time</div>
+          <div style={{ fontSize:11, color:"#999", marginTop:2 }}>{points.length} month{points.length!==1?"s":"s"} of data</div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontSize:10, color:lineColor, fontWeight:700, textTransform:"uppercase", letterSpacing:1 }}>
+            {isGrowing ? "▲ Growing" : "▼ Declining"}
+          </div>
+          <div style={{ fontSize:12, color:lineColor, fontWeight:700, marginTop:2 }}>
+            {isGrowing?"+":""}{fmt(points[points.length-1].value - points[0].value)}
+          </div>
+        </div>
+      </div>
+
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display:"block", overflow:"visible" }}>
+        {/* Zero line if values cross zero */}
+        {minVal < 0 && maxVal > 0 && (
+          <line x1={PAD.left} y1={toY(0)} x2={W-PAD.right} y2={toY(0)}
+            stroke="#E0E0E0" strokeWidth="1" strokeDasharray="4,3"/>
+        )}
+
+        {/* Fill */}
+        <path d={fillD} fill={fillColor}/>
+
+        {/* Line */}
+        <path d={pathD} fill="none" stroke={lineColor} strokeWidth="2.5"
+          strokeLinecap="round" strokeLinejoin="round"/>
+
+        {/* Dots + labels */}
+        {points.map((p,i) => {
+          const x = toX(i), y = toY(p.value);
+          const showLabel = i===0 || i===points.length-1 || i%labelEvery===0;
+          const isLast = i===points.length-1;
+          return (
+            <g key={p.mk}>
+              <circle cx={x} cy={y} r={isLast?5:3}
+                fill={isLast?lineColor:"#fff"} stroke={lineColor} strokeWidth="2"/>
+              {showLabel && (
+                <text x={x} y={H-4} textAnchor="middle"
+                  fontSize="9" fill="#999" fontFamily="system-ui,sans-serif">
+                  {p.label}
+                </text>
+              )}
+              {isLast && (
+                <text x={x} y={y-10} textAnchor={x > W*0.7?"end":"middle"}
+                  fontSize="9" fill={lineColor} fontWeight="bold" fontFamily="system-ui,sans-serif">
+                  {fmt(p.value).replace("UGX ","")}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function Home({ data, setData }) {
   const total    = data.accounts.reduce((s,a)=>s+ +a.balance,0);
   const totalIn  = data.income.reduce((s,x)=>s+ +x.amount,0);
@@ -171,6 +350,37 @@ function Home({ data, setData }) {
   const [sheet, setSheet] = useState(null);
   const allCats = [...EXP_CATS, ...(data.customCats||[])];
   const [qF, setQF] = useState({ type:"expense", date:today(), category:allCats[0], source:INC_SOURCES[0], note:"", amount:"", accountId:"", isLoan:false });
+  const [qKito, setQKito] = useState({ date:today(), item:"", category:"Jewellery", qty:"1", price:"", payMode:"Cash", accountId:"", customer:"" });
+
+  const logKitoSale = () => {
+    if (!qKito.price || !qKito.accountId) return;
+    const acct = data.accounts.find(a=>a.id===qKito.accountId);
+    const amt  = +qKito.price * +qKito.qty;
+    const saleEntry = {
+      id:uid(), date:qKito.date, item:qKito.item||"Sale",
+      category:qKito.category, qty:qKito.qty, price:qKito.price,
+      note: qKito.customer ? `Customer: ${qKito.customer}` : "",
+      accountId:qKito.accountId, acctName:acct?.name||"",
+      payMode:qKito.payMode
+    };
+    // Also add to customer book if name given and not already there
+    let customers = data.customers || [];
+    if (qKito.customer) {
+      const exists = customers.find(c=>c.name.toLowerCase()===qKito.customer.toLowerCase());
+      if (!exists) {
+        customers = [{id:uid(), name:qKito.customer, phone:"", location:"", firstOrder:qKito.date, notes:"Added from quick sale"}, ...customers];
+      }
+    }
+    const nd = {
+      ...data,
+      kSales: [saleEntry, ...data.kSales],
+      customers,
+      accounts: data.accounts.map(a=>a.id===qKito.accountId?{...a,balance:+a.balance+amt}:a)
+    };
+    save(nd); setData(nd);
+    setQKito({date:today(), item:"", category:"Jewellery", qty:"1", price:"", payMode:"Cash", accountId:"", customer:""});
+    setSheet(null);
+  };
 
   const logQuick = () => {
     if (!qF.amount||!qF.accountId) return;
@@ -208,6 +418,9 @@ function Home({ data, setData }) {
         <StatBox label="Net Cash" value={totalIn-totalOut} bg={totalIn-totalOut>=0?"#E8F5E9":"#FFEBEE"} color={totalIn-totalOut>=0?"#2E7D32":"#C62828"}/>
         <StatBox label="Kito Profit" value={kitoNet} bg={kitoNet>=0?"#FFF8E1":"#FFEBEE"} color={kitoNet>=0?"#F57F17":"#C62828"}/>
       </div>
+      {/* ── NET WORTH GRAPH ── */}
+      <NetWorthGraph data={data} currentTotal={total}/>
+
       <div style={{ margin:"0 16px 12px", background:"#fff", borderRadius:16, padding:"14px 16px" }}>
         <div style={{ fontSize:13, fontWeight:800, color:"#333", marginBottom:12 }}>💳 Debt Snapshot</div>
         <div style={{ display:"flex", justifyContent:"space-between" }}>
@@ -230,7 +443,15 @@ function Home({ data, setData }) {
         }
       </div>
 
-      {/* Floating + button */}
+      {/* Floating buttons */}
+      {/* 💎 Kito quick sale */}
+      <button onClick={()=>setSheet("kito")} style={{
+        position:"fixed", bottom:80, right:84, width:56, height:56, borderRadius:"50%",
+        background:"linear-gradient(135deg,#D4820A,#F4A822)", color:"#fff", border:"none",
+        fontSize:22, cursor:"pointer", zIndex:40,
+        boxShadow:"0 4px 16px #D4820A66", display:"flex", alignItems:"center", justifyContent:"center"
+      }}>💎</button>
+      {/* ⚡ Quick personal log */}
       <button onClick={()=>setSheet("quick")} style={{
         position:"fixed", bottom:80, right:20, width:56, height:56, borderRadius:"50%",
         background:"linear-gradient(135deg,#E8552A,#E8852A)", color:"#fff", border:"none",
@@ -238,9 +459,8 @@ function Home({ data, setData }) {
         boxShadow:"0 4px 16px #E8552A66", display:"flex", alignItems:"center", justifyContent:"center"
       }}>+</button>
 
-      {/* Quick log sheet */}
+      {/* Quick personal log sheet */}
       <Sheet open={sheet==="quick"} onClose={()=>setSheet(null)} title="⚡ Quick Log">
-        {/* Type toggle */}
         <div style={{ display:"flex", gap:8, marginBottom:14 }}>
           {["expense","income"].map(t=>(
             <button key={t} onClick={()=>setQF(f=>({...f,type:t}))} style={{ flex:1, padding:"10px", borderRadius:10, border:"none", background:qF.type===t?(t==="expense"?"#C62828":"#2E7D32"):"#F5F5F5", color:qF.type===t?"#fff":"#999", fontWeight:700, fontSize:13, cursor:"pointer", textTransform:"capitalize" }}>{t}</button>
@@ -267,7 +487,6 @@ function Home({ data, setData }) {
         <input style={S.inp} type="number" value={qF.amount} onChange={e=>setQF(f=>({...f,amount:e.target.value}))} placeholder="0"/>
         <label style={S.lbl}>Note</label>
         <input style={S.inp} type="text" value={qF.note} onChange={e=>setQF(f=>({...f,note:e.target.value}))} placeholder="Optional"/>
-        {/* Loan toggle */}
         <div onClick={()=>setQF(f=>({...f,isLoan:!f.isLoan}))} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:qF.isLoan?"#E8F5E9":"#F5F5F5", borderRadius:12, marginBottom:14, cursor:"pointer" }}>
           <div style={{ width:22, height:22, borderRadius:"50%", border:`2px solid ${qF.isLoan?"#2E7D32":"#CCC"}`, background:qF.isLoan?"#2E7D32":"transparent", display:"flex", alignItems:"center", justifyContent:"center" }}>
             {qF.isLoan && <span style={{ color:"#fff", fontSize:14 }}>✓</span>}
@@ -280,6 +499,49 @@ function Home({ data, setData }) {
           </div>
         </div>
         <button style={btn(qF.type==="expense"?"#C62828":"#2E7D32")} onClick={logQuick}>Log It ✓</button>
+      </Sheet>
+
+      {/* 💎 Kito quick sale sheet */}
+      <Sheet open={sheet==="kito"} onClose={()=>setSheet(null)} title="💎 Quick Kito Sale">
+        <div style={{ background:"#FFF8E1", borderRadius:12, padding:"10px 14px", marginBottom:14, fontSize:12, color:"#D4820A", fontWeight:600 }}>
+          Sale logged here goes straight into Kito sales + updates your account balance
+        </div>
+        <label style={S.lbl}>Date</label>
+        <input style={S.inp} type="date" value={qKito.date} onChange={e=>setQKito(f=>({...f,date:e.target.value}))}/>
+        <label style={S.lbl}>Item / Product *</label>
+        <input style={S.inp} type="text" value={qKito.item} onChange={e=>setQKito(f=>({...f,item:e.target.value}))} placeholder="e.g. Gold bracelet"/>
+        <label style={S.lbl}>Category</label>
+        <select style={S.sel} value={qKito.category} onChange={e=>setQKito(f=>({...f,category:e.target.value}))}>
+          {["Jewellery","Phone Cases","Watch Straps","Notebooks","Accessories","Custom Gifts","Other"].map(c=><option key={c}>{c}</option>)}
+        </select>
+        <div style={{ display:"flex", gap:10 }}>
+          <div style={{ flex:1 }}>
+            <label style={S.lbl}>Qty</label>
+            <input style={{...S.inp}} type="number" value={qKito.qty} onChange={e=>setQKito(f=>({...f,qty:e.target.value}))} placeholder="1"/>
+          </div>
+          <div style={{ flex:2 }}>
+            <label style={S.lbl}>Price per unit (UGX) *</label>
+            <input style={{...S.inp}} type="number" value={qKito.price} onChange={e=>setQKito(f=>({...f,price:e.target.value}))} placeholder="0"/>
+          </div>
+        </div>
+        {qKito.price && qKito.qty && <div style={{ background:"#E8F5E9", borderRadius:10, padding:"8px 12px", marginBottom:14, fontWeight:700, color:"#2E7D32", fontSize:14 }}>
+          Total: {fmt(+qKito.price * +qKito.qty)}
+        </div>}
+        <label style={S.lbl}>Payment Mode</label>
+        <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+          {["Cash","Mobile Money","Deposit"].map(m=>(
+            <button key={m} onClick={()=>setQKito(f=>({...f,payMode:m}))} style={{ flex:1, padding:"8px 4px", borderRadius:10, border:"none", fontSize:11, fontWeight:700, cursor:"pointer",
+              background:qKito.payMode===m?"#2E7D32":"#F5F5F5", color:qKito.payMode===m?"#fff":"#999" }}>{m}</button>
+          ))}
+        </div>
+        <label style={S.lbl}>Into Account *</label>
+        <select style={S.sel} value={qKito.accountId} onChange={e=>setQKito(f=>({...f,accountId:e.target.value}))}>
+          <option value="">Select account…</option>
+          {data.accounts.map(a=><option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}
+        </select>
+        <label style={S.lbl}>Customer Name</label>
+        <input style={S.inp} type="text" value={qKito.customer} onChange={e=>setQKito(f=>({...f,customer:e.target.value}))} placeholder="Optional but useful!"/>
+        <button style={btn("#D4820A")} onClick={logKitoSale}>Record Sale ✓</button>
       </Sheet>
     </>
   );
@@ -527,7 +789,11 @@ function Personal({ data, setData }) {
             <div style={{ fontSize:26, fontWeight:900, color:"#2E7D32" }}>{fmt(totalIn)}</div>
           </div>
           <button style={btn("#2E7D32")} onClick={()=>setSheet("income")}>+ Add Income</button>
-          {data.income.length===0?<Empty text="No income recorded yet"/>:data.income.map(x=><TxRow key={x.id} label={x.source} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#2E7D32" tag={x.acctName} onEdit={()=>openEdit("income",x)} onDel={()=>delIncome(x.id,x.amount,x.accountId)}/>)}
+          {data.income.length===0?<Empty text="No income recorded yet"/>:groupByMonth(data.income).map(g=>(
+              <MonthGroup key={g.mk} label={g.label} total={fmt(g.total)} color="#2E7D32" bg="#E8F5E9">
+                {g.txs.map(x=><TxRow key={x.id} label={x.source} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#2E7D32" tag={x.acctName} onEdit={()=>openEdit("income",x)} onDel={()=>delIncome(x.id,x.amount,x.accountId)}/>)}
+              </MonthGroup>
+            ))}
         </>}
         {sub==="expenses" && <>
           <div style={{ background:"#FFEBEE", borderRadius:16, padding:"14px 16px", marginBottom:14 }}>
@@ -535,7 +801,11 @@ function Personal({ data, setData }) {
             <div style={{ fontSize:26, fontWeight:900, color:"#C62828" }}>{fmt(totalOut)}</div>
           </div>
           <button style={btn("#C62828")} onClick={()=>setSheet("expense")}>+ Add Expense</button>
-          {data.expenses.length===0?<Empty text="No expenses yet"/>:data.expenses.map(x=><TxRow key={x.id} label={x.category} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#C62828" tag={x.acctName} onEdit={()=>openEdit("expense",x)} onDel={()=>delExpense(x.id,x.amount,x.accountId)}/>)}
+          {data.expenses.length===0?<Empty text="No expenses yet"/>:groupByMonth(data.expenses).map(g=>(
+              <MonthGroup key={g.mk} label={g.label} total={fmt(g.total)} color="#C62828" bg="#FFEBEE">
+                {g.txs.map(x=><TxRow key={x.id} label={x.category} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#C62828" tag={x.acctName} onEdit={()=>openEdit("expense",x)} onDel={()=>delExpense(x.id,x.amount,x.accountId)}/>)}
+              </MonthGroup>
+            ))}
         </>}
         {sub==="savings" && <>
           <button style={btn("#7B1FA2")} onClick={()=>setSheet("savings")}>+ New Goal</button>
@@ -767,8 +1037,16 @@ function Kito({ data, setData }) {
       </div>
       <SubTabs tabs={["sales","expenses","inventory","salary"]} active={sub} onChange={setSub} color="#F57F17"/>
       <div style={S.pad}>
-        {sub==="sales"&&<><button style={btn("#2E7D32")} onClick={()=>setSheet("sale")}>+ Record Sale</button>{data.kSales.length===0?<Empty text="No sales yet"/>:data.kSales.map(x=><TxRow key={x.id} label={x.item||"Sale"} sub={`${x.date} · ${x.qty} unit(s)${x.note?" · "+x.note:""}`} right={fmt(+x.price* +x.qty)} rightColor="#2E7D32" tag={x.acctName} onDel={()=>delSale(x.id,x.price,x.qty,x.accountId)}/>)}</>}
-        {sub==="expenses"&&<><button style={btn("#C62828")} onClick={()=>setSheet("exp")}>+ Add Expense</button>{data.kExpenses.length===0?<Empty text="No expenses yet"/>:data.kExpenses.map(x=><TxRow key={x.id} label={x.category} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#C62828" tag={x.acctName} onDel={()=>delExp(x.id,x.amount,x.accountId)}/>)}</>}
+        {sub==="sales"&&<><button style={btn("#2E7D32")} onClick={()=>setSheet("sale")}>+ Record Sale</button>{data.kSales.length===0?<Empty text="No sales yet"/>:groupByMonth(data.kSales.map(x=>({...x,amount:+x.price* +x.qty}))).map(g=>(
+              <MonthGroup key={g.mk} label={g.label} total={fmt(g.total)} color="#2E7D32" bg="#E8F5E9">
+                {g.txs.map(x=><TxRow key={x.id} label={x.item||"Sale"} sub={`${x.date} · ${x.qty} unit(s)${x.note?" · "+x.note:""}`} right={fmt(+x.price* +x.qty)} rightColor="#2E7D32" tag={x.acctName} onDel={()=>delSale(x.id,x.price,x.qty,x.accountId)}/>)}
+              </MonthGroup>
+            ))}</>}
+        {sub==="expenses"&&<><button style={btn("#C62828")} onClick={()=>setSheet("exp")}>+ Add Expense</button>{data.kExpenses.length===0?<Empty text="No expenses yet"/>:groupByMonth(data.kExpenses).map(g=>(
+              <MonthGroup key={g.mk} label={g.label} total={fmt(g.total)} color="#C62828" bg="#FFEBEE">
+                {g.txs.map(x=><TxRow key={x.id} label={x.category} sub={`${x.date}${x.note?" · "+x.note:""}`} right={fmt(x.amount)} rightColor="#C62828" tag={x.acctName} onDel={()=>delExp(x.id,x.amount,x.accountId)}/>)}
+              </MonthGroup>
+            ))}</>}
         {sub==="inventory"&&<><button style={btn()} onClick={()=>setSheet("inv")}>+ Add Item</button>{data.kInventory.length===0?<Empty text="No inventory yet"/>:data.kInventory.map(inv=>{const low= +inv.qty<= +inv.reorderAt&&inv.reorderAt;return(<div key={inv.id} style={{ background:low?"#FFEBEE":"#fff", borderRadius:14, padding:"12px 14px", marginBottom:10 }}><div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}><div><div style={{ fontWeight:700, color:"#1A1A1A" }}>{inv.name}</div><div style={{ color:"#999", fontSize:11 }}>{fmt(inv.costPerUnit)} per {inv.unit}</div></div><div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>{low&&<span style={{ background:"#FFEBEE", color:"#C62828", borderRadius:20, padding:"2px 8px", fontSize:10, fontWeight:700 }}>Low Stock</span>}<button onClick={()=>delInv(inv.id)} style={{ background:"none", border:"none", color:"#CCC", cursor:"pointer", fontSize:18 }}>×</button></div></div><div style={{ display:"flex", alignItems:"center", gap:8 }}><span style={{ fontSize:11, color:"#999", fontWeight:700, textTransform:"uppercase" }}>Qty:</span><input type="number" value={inv.qty} onChange={e=>updInv(inv.id,"qty",e.target.value)} style={{ width:60, border:"1.5px solid #E0E0E0", borderRadius:8, padding:"5px 8px", fontSize:14, outline:"none" }}/><span style={{ color:"#999", fontSize:12 }}>{inv.unit} · reorder ≤{inv.reorderAt}</span></div></div>);})}</>}
         {sub==="salary"&&<><div style={{ color:"#999", fontSize:12, marginBottom:12 }}>Each payment also goes into Personal income automatically.</div>{data.kSalary.length===0?<Empty text="No salary transfers yet"/>:data.kSalary.map(x=><TxRow key={x.id} label="Salary Transfer" sub={`${x.date} · ${x.note}`} right={fmt(x.amount)} rightColor="#F57F17" tag={x.acctName} onDel={()=>delSal(x.id)}/>)}</>}
       </div>
@@ -1427,12 +1705,48 @@ function loadTabOrder() {
 }
 
 export default function App() {
-  const [data, setData] = useState(load);
-  const [tab,  setTab]  = useState("home");
+  const [data, setData]     = useState(load);
+  const [tab,  setTab]      = useState("home");
   const [tabOrder, setTabOrder] = useState(loadTabOrder);
   const [dragId, setDragId] = useState(null);
   const [syncing, setSyncing] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [searchQ,   setSearchQ]   = useState("");
   const dateStr = new Date().toLocaleDateString("en-UG",{ weekday:"long", day:"numeric", month:"long" });
+
+  // Search across all data
+  const searchResults = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return [];
+    const results = [];
+
+    // Personal income
+    data.income.filter(x =>
+      [x.source, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Income", label:x.source, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#2E7D32", tag:x.acctName }));
+
+    // Personal expenses
+    data.expenses.filter(x =>
+      [x.category, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Expense", label:x.category, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#C62828", tag:x.acctName }));
+
+    // Kito sales
+    data.kSales.filter(x =>
+      [x.item, x.note, x.acctName, (x.price*x.qty)+"", x.date, x.category].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Kito Sale", label:x.item||"Sale", sub:`${x.date} · ${x.qty} unit(s)`, amount:+x.price* +x.qty, color:"#D4820A", tag:x.acctName }));
+
+    // Kito expenses
+    data.kExpenses.filter(x =>
+      [x.category, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Kito Expense", label:x.category, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#C62828", tag:x.acctName }));
+
+    // Debts
+    [...data.debts.iOwe, ...data.debts.owedMe, ...data.debts.business].filter(x =>
+      [x.name, x.note, x.amount+""].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Debt", label:x.name, sub:x.note||"", amount:x.amount, color:"#6A1B9A", tag:x.paid?"Settled":"Unpaid" }));
+
+    return results.slice(0, 50);
+  }, [searchQ, data]);
 
   // Load from Supabase on first open
   useEffect(() => {
@@ -1492,6 +1806,7 @@ export default function App() {
           <div style={{ display:"flex", gap:8, alignItems:"center" }}>
             {overCount>0 && <div style={{ background:"#FFEBEE", color:"#C62828", borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:800 }}>⚠️ {overCount} over budget</div>}
             {syncing && <div style={{ background:"#E3F2FD", color:"#1565C0", borderRadius:8, padding:"4px 10px", fontSize:11, fontWeight:800 }}>⟳ sync</div>}
+            <button onClick={()=>{setSearching(true);setSearchQ("");}} style={{ background:"#F5F5F5", border:"none", borderRadius:8, padding:"6px 10px", fontSize:18, cursor:"pointer" }}>🔍</button>
             <div style={{ background:"#FFF0EB", color:"#E8552A", borderRadius:8, padding:"4px 10px", fontSize:11, fontWeight:800 }}>UGX</div>
           </div>
         </div>
@@ -1512,6 +1827,63 @@ export default function App() {
         </div>
         <div style={{ fontSize:10, color:"#CCC", textAlign:"center", paddingBottom:2 }}>hold & drag tabs to reorder</div>
       </div>
+
+      {/* ── SEARCH OVERLAY ── */}
+      {searching && (
+        <div style={{ position:"fixed", inset:0, background:"#fff", zIndex:100, display:"flex", flexDirection:"column" }}>
+          {/* Search header */}
+          <div style={{ padding:"16px 16px 12px", borderBottom:"1px solid #EEE", display:"flex", gap:10, alignItems:"center" }}>
+            <div style={{ flex:1, display:"flex", alignItems:"center", gap:8, background:"#F5F5F5", borderRadius:12, padding:"10px 14px" }}>
+              <span style={{ fontSize:16 }}>🔍</span>
+              <input
+                autoFocus
+                type="text"
+                value={searchQ}
+                onChange={e=>setSearchQ(e.target.value)}
+                placeholder="Search transactions, categories, notes..."
+                style={{ flex:1, border:"none", background:"transparent", outline:"none", fontSize:15, fontFamily:"system-ui,sans-serif", color:"#1A1A1A" }}
+              />
+              {searchQ && <button onClick={()=>setSearchQ("")} style={{ background:"none", border:"none", color:"#999", cursor:"pointer", fontSize:18 }}>×</button>}
+            </div>
+            <button onClick={()=>{setSearching(false);setSearchQ("");}} style={{ background:"none", border:"none", color:"#E8552A", fontWeight:700, fontSize:14, cursor:"pointer", flexShrink:0 }}>Cancel</button>
+          </div>
+
+          {/* Results */}
+          <div style={{ flex:1, overflowY:"auto", padding:"0 16px" }}>
+            {!searchQ && (
+              <div style={{ textAlign:"center", padding:"48px 20px", color:"#BBB" }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>🔍</div>
+                <div style={{ fontSize:14, fontWeight:600, color:"#888" }}>Search everything</div>
+                <div style={{ fontSize:12, marginTop:6 }}>Income, expenses, Kito sales, debts</div>
+              </div>
+            )}
+            {searchQ && searchResults.length===0 && (
+              <div style={{ textAlign:"center", padding:"48px 20px", color:"#BBB" }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>📭</div>
+                <div style={{ fontSize:14 }}>No results for "{searchQ}"</div>
+              </div>
+            )}
+            {searchQ && searchResults.length>0 && <>
+              <div style={{ padding:"12px 0 4px", fontSize:12, color:"#999", fontWeight:600 }}>
+                {searchResults.length} result{searchResults.length!==1?"s":""}
+              </div>
+              {searchResults.map((r,i)=>(
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:"1px solid #F5F5F5" }}>
+                  <div style={{ background:r.color+"18", borderRadius:8, padding:"4px 8px", flexShrink:0 }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:r.color, textTransform:"uppercase", letterSpacing:0.8 }}>{r.type}</div>
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:600, color:"#1A1A1A", fontSize:14, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{r.label}</div>
+                    <div style={{ color:"#999", fontSize:11, marginTop:1 }}>{r.sub}</div>
+                  </div>
+                  {r.tag && <span style={{ background:"#FFF3E0", color:"#E65100", borderRadius:20, padding:"2px 8px", fontSize:10, fontWeight:700, whiteSpace:"nowrap", flexShrink:0 }}>{r.tag}</span>}
+                  <div style={{ fontWeight:800, color:r.color, fontSize:14, whiteSpace:"nowrap", flexShrink:0 }}>{fmt(r.amount)}</div>
+                </div>
+              ))}
+            </>}
+          </div>
+        </div>
+      )}
 
       {tab==="home"      && <Home      data={data} setData={setData}/>}
       {tab==="accounts"  && <Accounts  data={data} setData={setData}/>}
