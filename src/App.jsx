@@ -1,35 +1,33 @@
 import { useState, useMemo, useEffect } from "react";
+import { createClient } from "@supabase/supabase-js";
 
 // ── SUPABASE ──────────────────────────────────────────────────────────────────
 const SUPA_URL = "https://xlzdfueighmmipldadti.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsemRmdWVpZ2htbWlwbGRhZHRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQyNjYxNDQsImV4cCI6MjA4OTg0MjE0NH0.g1eMi2Ar3Rf6pWG_T4MChGMhCH0X3wfYpFMcUvi_qaE";
-const SUPA_ID  = "becca";
+const SIGNUP_CODE = "CANTORA";
 
-async function loadFromSupabase() {
+const supabase = createClient(SUPA_URL, SUPA_KEY);
+
+async function loadFromSupabase(userId) {
   try {
-    const res = await fetch(`${SUPA_URL}/rest/v1/finaura_data?id=eq.${SUPA_ID}&select=data`, {
-      headers: { "apikey": SUPA_KEY, "Authorization": `Bearer ${SUPA_KEY}` }
-    });
-    const rows = await res.json();
-    if (rows && rows[0] && rows[0].data && Object.keys(rows[0].data).length > 0) {
-      return rows[0].data;
-    }
+    const { data, error } = await supabase
+      .from("finaura_data")
+      .select("data")
+      .eq("user_id", userId)
+      .single();
+    if (data && data.data && Object.keys(data.data).length > 0) return data.data;
   } catch {}
   return null;
 }
 
-async function saveToSupabase(d) {
+async function saveToSupabase(userId, d) {
   try {
-    await fetch(`${SUPA_URL}/rest/v1/finaura_data?id=eq.${SUPA_ID}`, {
-      method: "PATCH",
-      headers: {
-        "apikey": SUPA_KEY,
-        "Authorization": `Bearer ${SUPA_KEY}`,
-        "Content-Type": "application/json",
-        "Prefer": "return=minimal"
-      },
-      body: JSON.stringify({ data: d, updated_at: new Date().toISOString() })
-    });
+    // Upsert — insert if not exists, update if exists
+    await supabase.from("finaura_data").upsert({
+      user_id: userId,
+      data: d,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "user_id" });
   } catch {}
 }
 
@@ -87,9 +85,9 @@ function load() {
   } catch {}
   return { accounts:DEFAULT_ACCOUNTS, income:[], expenses:[], savings:[], kSales:[], kExpenses:[], kSalary:[], kInventory:[], debts:{ iOwe:[], owedMe:[], business:[] }, challenges:[], transfers:[], budgets:{}, recurring:[], customCats:[] };
 }
-function save(d) {
+function save(d, userId) {
   try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {}
-  saveToSupabase(d);
+  if (userId) saveToSupabase(userId, d);
 }
 
 // ── shared styles ─────────────────────────────────────────────────────────────
@@ -377,7 +375,7 @@ function Home({ data, setData }) {
       customers,
       accounts: data.accounts.map(a=>a.id===qKito.accountId?{...a,balance:+a.balance+amt}:a)
     };
-    save(nd); setData(nd);
+    setData(nd);
     setQKito({date:today(), item:"", category:"Jewellery", qty:"1", price:"", payMode:"Cash", accountId:"", customer:""});
     setSheet(null);
   };
@@ -398,7 +396,7 @@ function Home({ data, setData }) {
       nd.accounts = nd.accounts.map(a=>a.id===qF.accountId?{...a,balance:+a.balance+ +qF.amount}:a);
       if (qF.isLoan) nd.debts = {...nd.debts, iOwe:[{id:uid(),name:qF.note||"Borrowed",amount:qF.amount,due:"",note:"Quick log",paid:false},...nd.debts.iOwe]};
     }
-    save(nd); setData(nd);
+    setData(nd);
     setQF({type:"expense",date:today(),category:allCats[0],source:INC_SOURCES[0],note:"",amount:"",accountId:"",isLoan:false});
     setSheet(null);
   };
@@ -562,15 +560,15 @@ function Accounts({ data, setData }) {
 
   const saveBal = () => {
     const nd={...data,accounts:data.accounts.map(a=>a.id===sel.id?{...a,balance:parseFloat(editBal)||0}:a)};
-    save(nd);setData(nd);setSheet(null);
+    setData(nd);setSheet(null);
   };
   const addAcct = () => {
     if (!newName.trim()) return;
     const cols=["#E53935","#8E24AA","#00897B","#F4511E","#039BE5"];
     const nd={...data,accounts:[...data.accounts,{id:uid(),name:newName.trim(),balance:0,color:cols[data.accounts.length%cols.length],emoji:"💰"}]};
-    save(nd);setData(nd);setNN("");setSheet(null);
+    setData(nd);setNN("");setSheet(null);
   };
-  const delAcct = (id) => { const nd={...data,accounts:data.accounts.filter(a=>a.id!==id)};save(nd);setData(nd); };
+  const delAcct = (id) => { const nd={...data,accounts:data.accounts.filter(a=>a.id!==id)};setData(nd); };
 
   const doTransfer = () => {
     if (!tFrom||!tTo||!tAmt||tFrom===tTo) return;
@@ -587,7 +585,7 @@ function Accounts({ data, setData }) {
         return a;
       })
     };
-    save(nd);setData(nd);
+    setData(nd);
     setTFrom("");setTTo("");setTAmt("");setTNote("");setSheet(null);
   };
 
@@ -601,7 +599,7 @@ function Accounts({ data, setData }) {
         return a;
       })
     };
-    save(nd);setData(nd);
+    setData(nd);
   };
 
   return (
@@ -725,7 +723,7 @@ function Personal({ data, setData }) {
       [section]: data[section].map(x => x.id === old.id ? updated : x),
       accounts
     };
-    save(nd); setData(nd); setSheet(null); setEditTx(null);
+    setData(nd); setSheet(null); setEditTx(null);
   };
 
   const addIncome = () => {
@@ -733,24 +731,24 @@ function Personal({ data, setData }) {
     const acct=data.accounts.find(a=>a.id===iF.accountId);
     let nd={...data,income:[{id:uid(),...iF,acctName:acct?.name||""},...data.income],accounts:data.accounts.map(a=>a.id===iF.accountId?{...a,balance:+a.balance+ +iF.amount}:a)};
     if (iF.isBorrowed || iF.source==="Loan Received") nd.debts={...nd.debts,iOwe:[{id:uid(),name:iF.note||"Loan",amount:iF.amount,due:"",note:"Added from income",paid:false,remaining:+iF.amount},...nd.debts.iOwe]};
-    save(nd);setData(nd);setIF({date:today(),source:INC_SOURCES[0],note:"",amount:"",accountId:"",isBorrowed:false});setSheet(null);
+    setData(nd);setIF({date:today(),source:INC_SOURCES[0],note:"",amount:"",accountId:"",isBorrowed:false});setSheet(null);
   };
   const addExpense = () => {
     if (!eF.amount||!eF.accountId) return;
     const acct=data.accounts.find(a=>a.id===eF.accountId);
     let nd={...data,expenses:[{id:uid(),...eF,acctName:acct?.name||""},...data.expenses],accounts:data.accounts.map(a=>a.id===eF.accountId?{...a,balance:+a.balance- +eF.amount}:a)};
     if (eF.isLoan) nd.debts={...nd.debts,owedMe:[{id:uid(),name:eF.note||"Loan",amount:eF.amount,due:"",note:"From expense log",paid:false},...nd.debts.owedMe]};
-    save(nd);setData(nd);setEF({date:today(),category:EXP_CATS[0],note:"",amount:"",accountId:"",isLoan:false});setSheet(null);
+    setData(nd);setEF({date:today(),category:EXP_CATS[0],note:"",amount:"",accountId:"",isLoan:false});setSheet(null);
   };
   const addSavings = () => {
     if (!sF.name) return;
     const nd={...data,savings:[{id:uid(),...sF},...data.savings]};
-    save(nd);setData(nd);setSF({name:"",goal:"",current:""});setSheet(null);
+    setData(nd);setSF({name:"",goal:"",current:""});setSheet(null);
   };
-  const delIncome  = (id,amt,acId) => { const nd={...data,income:data.income.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance- +amt}:a)};save(nd);setData(nd); };
-  const delExpense = (id,amt,acId) => { const nd={...data,expenses:data.expenses.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance+ +amt}:a)};save(nd);setData(nd); };
-  const delSaving  = (id) => { const nd={...data,savings:data.savings.filter(s=>s.id!==id)};save(nd);setData(nd); };
-  const updSaving  = (id,val) => { const nd={...data,savings:data.savings.map(s=>s.id===id?{...s,current:val}:s)};save(nd);setData(nd); };
+  const delIncome  = (id,amt,acId) => { const nd={...data,income:data.income.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance- +amt}:a)};setData(nd); };
+  const delExpense = (id,amt,acId) => { const nd={...data,expenses:data.expenses.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance+ +amt}:a)};setData(nd); };
+  const delSaving  = (id) => { const nd={...data,savings:data.savings.filter(s=>s.id!==id)};setData(nd); };
+  const updSaving  = (id,val) => { const nd={...data,savings:data.savings.map(s=>s.id===id?{...s,current:val}:s)};setData(nd); };
 
   // recurring
   const [rF, setRF] = useState({ name:"", type:"income", source:INC_SOURCES[0], category:EXP_CATS[0], amount:"", accountId:"", frequency:"monthly", dayOfMonth:"1" });
@@ -758,11 +756,11 @@ function Personal({ data, setData }) {
   const addRecurring = () => {
     if (!rF.name||!rF.amount||!rF.accountId) return;
     const nd={...data,recurring:[{id:uid(),...rF,lastLogged:""},...recurring]};
-    save(nd);setData(nd);
+    setData(nd);
     setRF({name:"",type:"income",source:INC_SOURCES[0],category:EXP_CATS[0],amount:"",accountId:"",frequency:"monthly",dayOfMonth:"1"});
     setSheet(null);
   };
-  const delRecurring = (id) => { const nd={...data,recurring:recurring.filter(r=>r.id!==id)};save(nd);setData(nd); };
+  const delRecurring = (id) => { const nd={...data,recurring:recurring.filter(r=>r.id!==id)};setData(nd); };
   const logRecurring = (r) => {
     const acct=data.accounts.find(a=>a.id===r.accountId);
     const isIncome = r.type==="income";
@@ -773,7 +771,7 @@ function Personal({ data, setData }) {
       expenses:  !isIncome ? [{id:uid(),date:today(),category:r.category,note:r.name,amount:r.amount,accountId:r.accountId,acctName:acct?.name||""},...data.expenses] : data.expenses,
       accounts:  data.accounts.map(a=>a.id===r.accountId?{...a,balance:isIncome?+a.balance+ +r.amount:+a.balance- +r.amount}:a)
     };
-    save(nd);setData(nd);
+    setData(nd);
   };
 
   const totalIn  = data.income.reduce((s,x)=>s+ +x.amount,0);
@@ -869,7 +867,7 @@ function Personal({ data, setData }) {
             if(e.key==="Enter"&&e.target.value.trim()){
               const nc=e.target.value.trim();
               const nd={...data,customCats:[...(data.customCats||[]),nc]};
-              save(nd);setData(nd);setEF(f=>({...f,category:nc}));e.target.value="";
+              setData(nd);setEF(f=>({...f,category:nc}));e.target.value="";
             }
           }}/>
         <label style={S.lbl}>From Account *</label><select style={S.sel} value={eF.accountId} onChange={e=>setEF(f=>({...f,accountId:e.target.value}))}><option value="">Select account…</option>{data.accounts.map(a=><option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}</select>
@@ -994,13 +992,13 @@ function Kito({ data, setData }) {
     const acct=data.accounts.find(a=>a.id===sF.accountId);
     const amt= +sF.price* +sF.qty;
     const nd={...data,kSales:[{id:uid(),...sF,acctName:acct?.name||""},...data.kSales],accounts:data.accounts.map(a=>a.id===sF.accountId?{...a,balance:+a.balance+amt}:a)};
-    save(nd);setData(nd);setSF({date:today(),item:"",qty:"1",price:"",note:"",accountId:""});setSheet(null);
+    setData(nd);setSF({date:today(),item:"",qty:"1",price:"",note:"",accountId:""});setSheet(null);
   };
   const addExp = () => {
     if (!eF.amount||!eF.accountId) return;
     const acct=data.accounts.find(a=>a.id===eF.accountId);
     const nd={...data,kExpenses:[{id:uid(),...eF,acctName:acct?.name||""},...data.kExpenses],accounts:data.accounts.map(a=>a.id===eF.accountId?{...a,balance:+a.balance- +eF.amount}:a)};
-    save(nd);setData(nd);setEF({date:today(),category:KITO_CATS[0],note:"",amount:"",accountId:""});setSheet(null);
+    setData(nd);setEF({date:today(),category:KITO_CATS[0],note:"",amount:"",accountId:""});setSheet(null);
   };
   const paySalary = () => {
     if (!salF.amount||!salF.accountId) return;
@@ -1010,18 +1008,18 @@ function Kito({ data, setData }) {
       income:[{id:uid(),date:salF.date,source:"Kito Salary",note:salF.note,amount:salF.amount,accountId:salF.accountId,acctName:acct?.name||""},...data.income],
       accounts:data.accounts.map(a=>a.id===salF.accountId?{...a,balance:+a.balance+ +salF.amount}:a)
     };
-    save(nd);setData(nd);setSalF({date:today(),amount:"",note:"Salary",accountId:""});setSheet(null);
+    setData(nd);setSalF({date:today(),amount:"",note:"Salary",accountId:""});setSheet(null);
   };
   const addInv = () => {
     if (!invF.name) return;
     const nd={...data,kInventory:[{id:uid(),...invF},...data.kInventory]};
-    save(nd);setData(nd);setInvF({name:"",qty:"",unit:"pcs",costPerUnit:"",reorderAt:""});setSheet(null);
+    setData(nd);setInvF({name:"",qty:"",unit:"pcs",costPerUnit:"",reorderAt:""});setSheet(null);
   };
-  const delSale=(id,price,qty,acId)=>{ const nd={...data,kSales:data.kSales.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance- +price* +qty}:a)};save(nd);setData(nd); };
-  const delExp=(id,amt,acId)=>{ const nd={...data,kExpenses:data.kExpenses.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance+ +amt}:a)};save(nd);setData(nd); };
-  const delSal=(id)=>{ const nd={...data,kSalary:data.kSalary.filter(x=>x.id!==id)};save(nd);setData(nd); };
-  const delInv=(id)=>{ const nd={...data,kInventory:data.kInventory.filter(x=>x.id!==id)};save(nd);setData(nd); };
-  const updInv=(id,field,val)=>{ const nd={...data,kInventory:data.kInventory.map(i=>i.id===id?{...i,[field]:val}:i)};save(nd);setData(nd); };
+  const delSale=(id,price,qty,acId)=>{ const nd={...data,kSales:data.kSales.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance- +price* +qty}:a)};setData(nd); };
+  const delExp=(id,amt,acId)=>{ const nd={...data,kExpenses:data.kExpenses.filter(x=>x.id!==id),accounts:data.accounts.map(a=>a.id===acId?{...a,balance:+a.balance+ +amt}:a)};setData(nd); };
+  const delSal=(id)=>{ const nd={...data,kSalary:data.kSalary.filter(x=>x.id!==id)};setData(nd); };
+  const delInv=(id)=>{ const nd={...data,kInventory:data.kInventory.filter(x=>x.id!==id)};setData(nd); };
+  const updInv=(id,field,val)=>{ const nd={...data,kInventory:data.kInventory.map(i=>i.id===id?{...i,[field]:val}:i)};setData(nd); };
 
   return (
     <>
@@ -1110,17 +1108,17 @@ function Debts({ data, setData }) {
   const addDebt = () => {
     if (!form.name||!form.amount) return;
     const nd={...data,debts:{...data.debts,[sub]:[{id:uid(),...form,paid:false},...data.debts[sub]]}};
-    save(nd);setData(nd);setForm({name:"",amount:"",due:"",note:""});setSheet(null);
+    setData(nd);setForm({name:"",amount:"",due:"",note:""});setSheet(null);
   };
 
   const toggle = (id) => {
     const nd={...data,debts:{...data.debts,[sub]:data.debts[sub].map(x=>x.id===id?{...x,paid:!x.paid}:x)}};
-    save(nd);setData(nd);
+    setData(nd);
   };
 
   const del = (id) => {
     const nd={...data,debts:{...data.debts,[sub]:data.debts[sub].filter(x=>x.id!==id)}};
-    save(nd);setData(nd);
+    setData(nd);
   };
 
   const openPay = (e, x) => {
@@ -1139,7 +1137,7 @@ function Debts({ data, setData }) {
         ? {...x, amount:0, paid:true}
         : {...x, amount:remaining, note:(x.note||"")+` | Paid ${fmt(amt)} on ${today()}`};
     })}};
-    save(nd);setData(nd);setPaySheet(null);setPayAmt("");
+    setData(nd);setPaySheet(null);setPayAmt("");
   };
 
   return (
@@ -1284,7 +1282,7 @@ function Challenge({ data, setData }) {
     const perBubble = Math.round(parseFloat(cTotal) / numBubbles);
     const bubbles = Array.from({ length: numBubbles }, (_, i) => ({ id: i, value: perBubble, done: false }));
     const nd = { ...data, challenges:[{ id:uid(), name:cName, total:parseFloat(cTotal), bubbles, createdAt:today() }, ...challenges] };
-    save(nd);setData(nd);setCName("");setCTotal("");setSheet(null);
+    setData(nd);setCName("");setCTotal("");setSheet(null);
   };
 
   const toggleBubble = (cid, bid) => {
@@ -1292,12 +1290,12 @@ function Challenge({ data, setData }) {
       ? { ...c, bubbles: c.bubbles.map(b => b.id===bid ? {...b, done:!b.done} : b) }
       : c
     )};
-    save(nd);setData(nd);
+    setData(nd);
   };
 
   const delChallenge = (id) => {
     const nd = { ...data, challenges: data.challenges.filter(c=>c.id!==id) };
-    save(nd);setData(nd);
+    setData(nd);
   };
 
   return (
@@ -1402,12 +1400,12 @@ function Budget({ data, setData }) {
   const saveBudget = () => {
     if (!editCat || !editAmt) return;
     const nd = { ...data, budgets: { ...budgets, [editCat]: parseFloat(editAmt)||0 } };
-    save(nd); setData(nd); setSheet(null); setEditAmt("");
+    setData(nd); setSheet(null); setEditAmt("");
   };
 
   const delBudget = (cat) => {
     const nb = { ...budgets }; delete nb[cat];
-    const nd = { ...data, budgets: nb }; save(nd); setData(nd);
+    const nd = { ...data, budgets: nb }; setData(nd);
   };
 
   const openEdit = (cat) => { setEditCat(cat); setEditAmt(String(budgets[cat]||"")); setSheet("edit"); };
@@ -1704,6 +1702,123 @@ function loadTabOrder() {
   try { const o = localStorage.getItem(TAB_ORDER_KEY); return o ? JSON.parse(o) : DEFAULT_TABS.map(t=>t.id); } catch { return DEFAULT_TABS.map(t=>t.id); }
 }
 
+// ── LOGIN SCREEN ─────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [mode,     setMode]     = useState("login"); // login | signup
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [code,     setCode]     = useState("");
+  const [name,     setName]     = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState("");
+  const [msg,      setMsg]      = useState("");
+
+  const handleEmail = async () => {
+    setError(""); setMsg("");
+    if (!email || !password) { setError("Email and password required"); return; }
+    setLoading(true);
+    try {
+      if (mode === "signup") {
+        if (code !== SIGNUP_CODE) { setError("Invalid signup code. Ask Becca for access! 😄"); setLoading(false); return; }
+        const { error: e } = await supabase.auth.signUp({ email, password, options:{ data:{ full_name: name } } });
+        if (e) { setError(e.message); } else { setMsg("Check your email to confirm your account, then log in!"); setMode("login"); }
+      } else {
+        const { data, error: e } = await supabase.auth.signInWithPassword({ email, password });
+        if (e) { setError(e.message); } else { onLogin(data.user); }
+      }
+    } catch { setError("Something went wrong. Try again."); }
+    setLoading(false);
+  };
+
+  const handleGoogle = async () => {
+    setError("");
+    const { error: e } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin }
+    });
+    if (e) setError(e.message);
+  };
+
+  const S2 = {
+    page: { minHeight:"100vh", background:"#FFF0EB", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"20px", fontFamily:"system-ui,sans-serif" },
+    card: { background:"#fff", borderRadius:24, padding:"32px 24px", width:"100%", maxWidth:380, boxShadow:"0 8px 32px #E8552A22" },
+    inp:  { width:"100%", border:"1.5px solid #E0E0E0", borderRadius:12, padding:"13px 14px", fontSize:15, boxSizing:"border-box", outline:"none", background:"#FAFAFA", marginBottom:14, fontFamily:"system-ui,sans-serif" },
+    btn:  (bg) => ({ width:"100%", background:bg, color:"#fff", border:"none", borderRadius:12, padding:"14px", fontSize:15, fontWeight:800, cursor:"pointer", marginBottom:10, boxShadow:`0 3px 12px ${bg}44` }),
+  };
+
+  return (
+    <div style={S2.page}>
+      {/* Logo */}
+      <div style={{ textAlign:"center", marginBottom:28 }}>
+        <div style={{ fontSize:48, marginBottom:8 }}>💰</div>
+        <div style={{ fontSize:32, fontWeight:900, color:"#E8552A", letterSpacing:-1 }}>Finaura</div>
+        <div style={{ fontSize:13, color:"#999", marginTop:4 }}>Your personal finance app</div>
+      </div>
+
+      <div style={S2.card}>
+        {/* Mode toggle */}
+        <div style={{ display:"flex", gap:8, marginBottom:24 }}>
+          {["login","signup"].map(m=>(
+            <button key={m} onClick={()=>{setMode(m);setError("");setMsg("");}}
+              style={{ flex:1, padding:"10px", borderRadius:10, border:"none", fontWeight:700, fontSize:13, cursor:"pointer", textTransform:"capitalize",
+                background:mode===m?"#E8552A":"#F5F5F5", color:mode===m?"#fff":"#999" }}>
+              {m==="login"?"Sign In":"Sign Up"}
+            </button>
+          ))}
+        </div>
+
+        {mode==="signup" && (
+          <input style={S2.inp} type="text" placeholder="Your name" value={name}
+            onChange={e=>setName(e.target.value)}/>
+        )}
+        <input style={S2.inp} type="email" placeholder="Email address" value={email}
+          onChange={e=>setEmail(e.target.value)}/>
+        <input style={S2.inp} type="password" placeholder="Password" value={password}
+          onChange={e=>setPassword(e.target.value)}/>
+        {mode==="signup" && (
+          <input style={S2.inp} type="text" placeholder="Signup code (ask for access)" value={code}
+            onChange={e=>setCode(e.target.value)}/>
+        )}
+
+        {error && <div style={{ background:"#FFEBEE", color:"#C62828", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, fontWeight:600 }}>{error}</div>}
+        {msg   && <div style={{ background:"#E8F5E9", color:"#2E7D32", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, fontWeight:600 }}>{msg}</div>}
+
+        <button style={S2.btn("#E8552A")} onClick={handleEmail} disabled={loading}>
+          {loading ? "Please wait..." : mode==="login" ? "Sign In" : "Create Account"}
+        </button>
+
+        <div style={{ display:"flex", alignItems:"center", gap:10, margin:"4px 0 14px" }}>
+          <div style={{ flex:1, height:1, background:"#EEE" }}/>
+          <div style={{ fontSize:12, color:"#999" }}>or</div>
+          <div style={{ flex:1, height:1, background:"#EEE" }}/>
+        </div>
+
+        <button onClick={handleGoogle} style={{ width:"100%", background:"#fff", color:"#333",
+          border:"1.5px solid #E0E0E0", borderRadius:12, padding:"13px", fontSize:14,
+          fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center",
+          justifyContent:"center", gap:10 }}>
+          <svg width="18" height="18" viewBox="0 0 48 48">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          </svg>
+          Continue with Google
+        </button>
+
+        {mode==="login" && (
+          <div style={{ textAlign:"center", marginTop:14, fontSize:12, color:"#999" }}>
+            Don't have an account?{" "}
+            <span onClick={()=>setMode("signup")} style={{ color:"#E8552A", fontWeight:700, cursor:"pointer" }}>
+              Sign up
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData]     = useState(load);
   const [tab,  setTab]      = useState("home");
@@ -1807,7 +1922,7 @@ export default function App() {
             {overCount>0 && <div style={{ background:"#FFEBEE", color:"#C62828", borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:800 }}>⚠️ {overCount} over budget</div>}
             {syncing && <div style={{ background:"#E3F2FD", color:"#1565C0", borderRadius:8, padding:"4px 10px", fontSize:11, fontWeight:800 }}>⟳ sync</div>}
             <button onClick={()=>{setSearching(true);setSearchQ("");}} style={{ background:"#F5F5F5", border:"none", borderRadius:8, padding:"6px 10px", fontSize:18, cursor:"pointer" }}>🔍</button>
-            <div style={{ background:"#FFF0EB", color:"#E8552A", borderRadius:8, padding:"4px 10px", fontSize:11, fontWeight:800 }}>UGX</div>
+            <button onClick={handleLogout} style={{ background:"#FFEBEE", border:"none", borderRadius:8, padding:"6px 10px", fontSize:13, fontWeight:700, color:"#C62828", cursor:"pointer" }}>Exit</button>
           </div>
         </div>
         <div style={{ display:"flex", gap:4, marginTop:10, overflowX:"auto", paddingBottom:2 }}>
