@@ -1820,52 +1820,35 @@ function LoginScreen({ onLogin }) {
 }
 
 export default function App() {
-  const [data, setData]     = useState(load);
-  const [tab,  setTab]      = useState("home");
-  const [tabOrder, setTabOrder] = useState(loadTabOrder);
-  const [dragId, setDragId] = useState(null);
-  const [syncing, setSyncing] = useState(true);
+  const [user,      setUser]      = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [data,      setData]      = useState(load);
+  const [tab,       setTab]       = useState("home");
+  const [tabOrder,  setTabOrder]  = useState(loadTabOrder);
+  const [dragId,    setDragId]    = useState(null);
+  const [syncing,   setSyncing]   = useState(true);
   const [searching, setSearching] = useState(false);
   const [searchQ,   setSearchQ]   = useState("");
   const dateStr = new Date().toLocaleDateString("en-UG",{ weekday:"long", day:"numeric", month:"long" });
 
-  // Search across all data
-  const searchResults = useMemo(() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
-    const results = [];
-
-    // Personal income
-    data.income.filter(x =>
-      [x.source, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
-    ).forEach(x => results.push({ type:"Income", label:x.source, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#2E7D32", tag:x.acctName }));
-
-    // Personal expenses
-    data.expenses.filter(x =>
-      [x.category, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
-    ).forEach(x => results.push({ type:"Expense", label:x.category, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#C62828", tag:x.acctName }));
-
-    // Kito sales
-    data.kSales.filter(x =>
-      [x.item, x.note, x.acctName, (x.price*x.qty)+"", x.date, x.category].some(v=>(v||"").toLowerCase().includes(q))
-    ).forEach(x => results.push({ type:"Kito Sale", label:x.item||"Sale", sub:`${x.date} · ${x.qty} unit(s)`, amount:+x.price* +x.qty, color:"#D4820A", tag:x.acctName }));
-
-    // Kito expenses
-    data.kExpenses.filter(x =>
-      [x.category, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
-    ).forEach(x => results.push({ type:"Kito Expense", label:x.category, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#C62828", tag:x.acctName }));
-
-    // Debts
-    [...data.debts.iOwe, ...data.debts.owedMe, ...data.debts.business].filter(x =>
-      [x.name, x.note, x.amount+""].some(v=>(v||"").toLowerCase().includes(q))
-    ).forEach(x => results.push({ type:"Debt", label:x.name, sub:x.note||"", amount:x.amount, color:"#6A1B9A", tag:x.paid?"Settled":"Unpaid" }));
-
-    return results.slice(0, 50);
-  }, [searchQ, data]);
-
-  // Load from Supabase on first open
+  // Auth state listener
   useEffect(() => {
-    loadFromSupabase().then(remote => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user || null);
+      setAuthReady(true);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+      setAuthReady(true);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Load user data when logged in
+  useEffect(() => {
+    if (!user) return;
+    setSyncing(true);
+    loadFromSupabase(user.id).then(remote => {
       if (remote) {
         const merged = {
           accounts:   remote.accounts    || DEFAULT_ACCOUNTS,
@@ -1888,7 +1871,48 @@ export default function App() {
       }
       setSyncing(false);
     });
-  }, []);
+  }, [user]);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setData(load());
+  };
+
+  // Search across all data
+  const searchResults = useMemo(() => {
+    const q = searchQ.trim().toLowerCase();
+    if (!q) return [];
+    const results = [];
+    data.income.filter(x =>
+      [x.source, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Income", label:x.source, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#2E7D32", tag:x.acctName }));
+    data.expenses.filter(x =>
+      [x.category, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Expense", label:x.category, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#C62828", tag:x.acctName }));
+    data.kSales.filter(x =>
+      [x.item, x.note, x.acctName, (x.price*x.qty)+"", x.date, x.category].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Kito Sale", label:x.item||"Sale", sub:`${x.date} · ${x.qty} unit(s)`, amount:+x.price* +x.qty, color:"#D4820A", tag:x.acctName }));
+    data.kExpenses.filter(x =>
+      [x.category, x.note, x.acctName, x.amount+"", x.date].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Kito Expense", label:x.category, sub:`${x.date}${x.note?" · "+x.note:""}`, amount:x.amount, color:"#C62828", tag:x.acctName }));
+    [...data.debts.iOwe, ...data.debts.owedMe, ...data.debts.business].filter(x =>
+      [x.name, x.note, x.amount+""].some(v=>(v||"").toLowerCase().includes(q))
+    ).forEach(x => results.push({ type:"Debt", label:x.name, sub:x.note||"", amount:x.amount, color:"#6A1B9A", tag:x.paid?"Settled":"Unpaid" }));
+    return results.slice(0, 50);
+  }, [searchQ, data]);
+
+  // Show loading while checking auth
+  if (!authReady) return (
+    <div style={{ minHeight:"100vh", background:"#FFF0EB", display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column" }}>
+      <div style={{ fontSize:48, marginBottom:12 }}>💰</div>
+      <div style={{ fontSize:22, fontWeight:900, color:"#E8552A" }}>Finaura</div>
+      <div style={{ fontSize:13, color:"#999", marginTop:8 }}>Loading...</div>
+    </div>
+  );
+
+  // Show login if not logged in
+  if (!user) return <LoginScreen onLogin={setUser}/>;
 
   const tabs = tabOrder.map(id=>DEFAULT_TABS.find(t=>t.id===id)).filter(Boolean);
 
