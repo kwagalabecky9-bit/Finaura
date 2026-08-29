@@ -83,7 +83,7 @@ function load() {
       };
     }
   } catch {}
-  return { accounts:DEFAULT_ACCOUNTS, income:[], expenses:[], savings:[], kSales:[], kExpenses:[], kSalary:[], kInventory:[], debts:{ iOwe:[], owedMe:[], business:[] }, challenges:[], transfers:[], budgets:{}, recurring:[], customCats:[] };
+  return { accounts:DEFAULT_ACCOUNTS, income:[], expenses:[], savings:[], kSales:[], kExpenses:[], kSalary:[], kInventory:[], debts:{ iOwe:[], owedMe:[], business:[] }, challenges:[], transfers:[], budgets:{}, recurring:[], customCats:[], customInc:[] };
 }
 function save(d) {
   try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {}
@@ -1089,10 +1089,12 @@ function Kito({ data, setData }) {
 function Debts({ data, setData }) {
   const [sub,      setSub]      = useState("iOwe");
   const [sheet,    setSheet]    = useState(null);
-  const [form,     setForm]     = useState({ name:"", amount:"", due:"", note:"" });
+  const [form,     setForm]     = useState({ name:"", amount:"", due:"", note:"", interestRate:"", interestType:"monthly" });
   const [paySheet, setPaySheet] = useState(null);
   const [payAmt,   setPayAmt]   = useState("");
   const [expanded, setExpanded] = useState(null);
+  const [editSheet, setEditSheet] = useState(null);
+  const [editForm,  setEditForm]  = useState({});
 
   const SECS = {
     iOwe:     { label:"I Owe",         color:"#C0392B", bg:"#FDECEA", emoji:"😬" },
@@ -1259,9 +1261,50 @@ function Debts({ data, setData }) {
         <input style={S.inp} type="number" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))} placeholder="0"/>
         <label style={S.lbl}>Due Date</label>
         <input style={S.inp} type="date" value={form.due} onChange={e=>setForm(f=>({...f,due:e.target.value}))}/>
+        <label style={S.lbl}>Interest Rate % (optional)</label>
+        <input style={S.inp} type="number" value={form.interestRate} onChange={e=>setForm(f=>({...f,interestRate:e.target.value}))} placeholder="e.g. 5"/>
+        {form.interestRate && +form.interestRate > 0 && <>
+          <label style={S.lbl}>Interest Type</label>
+          <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+            {["monthly","annual"].map(t=>(
+              <button key={t} onClick={()=>setForm(f=>({...f,interestType:t}))}
+                style={{ flex:1, padding:"10px", borderRadius:10, border:"none", fontWeight:700, fontSize:13, cursor:"pointer", textTransform:"capitalize",
+                  background:form.interestType===t?"#D4820A":"#F5F0FF", color:form.interestType===t?"#fff":"#999" }}>{t}</button>
+            ))}
+          </div>
+          <div style={{ background:"#FFF8E1", borderRadius:10, padding:"10px 14px", marginBottom:14, fontSize:13, color:"#D4820A", fontWeight:600 }}>
+            Interest: {fmt(Math.round(+form.amount * +form.interestRate / 100))} / {form.interestType==="monthly"?"month":"year"}
+          </div>
+        </>}
         <label style={S.lbl}>Note</label>
         <input style={S.inp} type="text" value={form.note} onChange={e=>setForm(f=>({...f,note:e.target.value}))} placeholder="What for?"/>
         <button style={btn(sec.color)} onClick={addDebt}>Save</button>
+      </Sheet>
+
+      {/* Edit debt sheet */}
+      <Sheet open={!!editSheet} onClose={()=>setEditSheet(null)} title="✏️ Edit Entry">
+        {editSheet && <>
+          <label style={S.lbl}>Name *</label>
+          <input style={S.inp} type="text" value={editForm.name||""} onChange={e=>setEditForm(f=>({...f,name:e.target.value}))} autoFocus/>
+          <label style={S.lbl}>Amount (UGX) *</label>
+          <input style={S.inp} type="number" value={editForm.amount||""} onChange={e=>setEditForm(f=>({...f,amount:e.target.value}))}/>
+          <label style={S.lbl}>Due Date</label>
+          <input style={S.inp} type="date" value={editForm.due||""} onChange={e=>setEditForm(f=>({...f,due:e.target.value}))}/>
+          <label style={S.lbl}>Interest Rate %</label>
+          <input style={S.inp} type="number" value={editForm.interestRate||""} onChange={e=>setEditForm(f=>({...f,interestRate:e.target.value}))} placeholder="0"/>
+          {editForm.interestRate && +editForm.interestRate > 0 && (
+            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+              {["monthly","annual"].map(t=>(
+                <button key={t} onClick={()=>setEditForm(f=>({...f,interestType:t}))}
+                  style={{ flex:1, padding:"10px", borderRadius:10, border:"none", fontWeight:700, fontSize:13, cursor:"pointer", textTransform:"capitalize",
+                    background:editForm.interestType===t?"#D4820A":"#F5F0FF", color:editForm.interestType===t?"#fff":"#999" }}>{t}</button>
+              ))}
+            </div>
+          )}
+          <label style={S.lbl}>Note</label>
+          <input style={S.inp} type="text" value={editForm.note||""} onChange={e=>setEditForm(f=>({...f,note:e.target.value}))} placeholder="Optional"/>
+          <button style={btn(sec.color)} onClick={saveEdit}>Save Changes</button>
+        </>}
       </Sheet>
     </>
   );
@@ -1686,6 +1729,124 @@ function Reports({ data }) {
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────────
+// ── SETTINGS ─────────────────────────────────────────────────────────────────
+function Settings({ data, setData }) {
+  const [section, setSection] = useState("expCats");
+  const [newItem, setNewItem] = useState("");
+  const [editItem, setEditItem] = useState(null); // { index, value, type }
+  const [editVal,  setEditVal]  = useState("");
+
+  const customExp = data.customCats || [];
+  const customInc = data.customInc  || [];
+
+  const allExpCats = [...EXP_CATS,  ...customExp];
+  const allIncSrcs = [...INC_SOURCES, ...customInc];
+
+  const addCat = () => {
+    if (!newItem.trim()) return;
+    if (section === "expCats") {
+      if (allExpCats.includes(newItem.trim())) return;
+      setData({...data, customCats:[...customExp, newItem.trim()]});
+    } else {
+      if (allIncSrcs.includes(newItem.trim())) return;
+      setData({...data, customInc:[...customInc, newItem.trim()]});
+    }
+    setNewItem("");
+  };
+
+  const delCat = (name) => {
+    if (section === "expCats") {
+      setData({...data, customCats: customExp.filter(c=>c!==name)});
+    } else {
+      setData({...data, customInc: customInc.filter(c=>c!==name)});
+    }
+  };
+
+  const openEdit = (name, type) => { setEditItem({name, type}); setEditVal(name); };
+  const saveEdit = () => {
+    if (!editVal.trim() || !editItem) return;
+    if (editItem.type === "expCats") {
+      setData({...data, customCats: customExp.map(c=>c===editItem.name?editVal.trim():c),
+        expenses: data.expenses.map(x=>x.category===editItem.name?{...x,category:editVal.trim()}:x)});
+    } else {
+      setData({...data, customInc: customInc.map(c=>c===editItem.name?editVal.trim():c),
+        income: data.income.map(x=>x.source===editItem.name?{...x,source:editVal.trim()}:x)});
+    }
+    setEditItem(null);
+  };
+
+  const cats  = section==="expCats" ? allExpCats  : allIncSrcs;
+  const builtIn = section==="expCats" ? EXP_CATS : INC_SOURCES;
+  const color = section==="expCats" ? "#C0392B" : "#1B7A4E";
+  const bg    = section==="expCats" ? "#FDECEA" : "#E8F5EF";
+
+  return (
+    <>
+      <SubTabs tabs={["expCats","incSrcs"]} active={section} onChange={setSection} color="#7B52A8"/>
+      <div style={S.pad}>
+        <div style={{ fontSize:12, color:"#999", marginBottom:14, background:"#F5F0FF", borderRadius:10, padding:"10px 14px" }}>
+          {section==="expCats"
+            ? "🏷️ Manage your expense categories. Built-in ones can't be deleted but you can add your own."
+            : "💰 Manage your income sources. Built-in ones can't be deleted but you can add your own."}
+        </div>
+
+        {/* Add new */}
+        <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+          <input style={{...S.inp, marginBottom:0, flex:1}}
+            type="text" value={newItem}
+            onChange={e=>setNewItem(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&addCat()}
+            placeholder={section==="expCats"?"New category name...":"New income source..."}/>
+          <button onClick={addCat} style={{ background:"#7B52A8", color:"#fff", border:"none",
+            borderRadius:12, padding:"0 18px", fontWeight:700, fontSize:14, cursor:"pointer",
+            flexShrink:0 }}>Add</button>
+        </div>
+
+        {/* List */}
+        {cats.map((cat, i) => {
+          const isBuiltIn = builtIn.includes(cat);
+          const isEditing = editItem?.name===cat && editItem?.type===section;
+          return (
+            <div key={cat} style={{ display:"flex", alignItems:"center", gap:10,
+              padding:"11px 12px", marginBottom:6, borderRadius:12,
+              background: isBuiltIn?"#F5F0FF":"#fff",
+              border:`1.5px solid ${isBuiltIn?"#D5C5F0":"#EDE0FF"}` }}>
+              {isEditing ? (
+                <>
+                  <input style={{...S.inp, marginBottom:0, flex:1, fontSize:13}}
+                    type="text" value={editVal} onChange={e=>setEditVal(e.target.value)}
+                    autoFocus onKeyDown={e=>e.key==="Enter"&&saveEdit()}/>
+                  <button onClick={saveEdit} style={{ background:"#7B52A8", color:"#fff", border:"none",
+                    borderRadius:8, padding:"6px 12px", fontWeight:700, fontSize:12, cursor:"pointer" }}>✓</button>
+                  <button onClick={()=>setEditItem(null)} style={{ background:"none", border:"none",
+                    color:"#999", cursor:"pointer", fontSize:18 }}>×</button>
+                </>
+              ) : (
+                <>
+                  <div style={{ flex:1, fontSize:14, fontWeight:isBuiltIn?500:600,
+                    color: isBuiltIn?"#7B52A8":"#2C1654" }}>{cat}</div>
+                  {isBuiltIn
+                    ? <span style={{ fontSize:10, color:"#B39DDB", fontWeight:600,
+                        background:"#EDE0FF", borderRadius:20, padding:"2px 8px" }}>built-in</span>
+                    : <>
+                        <button onClick={()=>openEdit(cat, section)} style={{ background:"#EAF2F8",
+                          border:"none", color:"#1A5276", borderRadius:8, padding:"5px 10px",
+                          fontSize:12, fontWeight:700, cursor:"pointer" }}>✏️</button>
+                        <button onClick={()=>delCat(cat)} style={{ background:"#FDECEA", border:"none",
+                          color:"#C0392B", borderRadius:8, padding:"5px 10px",
+                          fontSize:12, fontWeight:700, cursor:"pointer" }}>×</button>
+                      </>
+                  }
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 const DEFAULT_TABS = [
   { id:"home",      emoji:"🏠", label:"Home"     },
   { id:"accounts",  emoji:"💳", label:"Accounts" },
@@ -1695,6 +1856,7 @@ const DEFAULT_TABS = [
   { id:"challenge", emoji:"🎯", label:"Goals"    },
   { id:"budget",    emoji:"💰", label:"Budget"   },
   { id:"reports",   emoji:"📊", label:"Reports"  },
+  { id:"settings",  emoji:"⚙️", label:"Settings" },
 ];
 
 const TAB_ORDER_KEY = "finaura_tab_order";
@@ -1703,7 +1865,8 @@ function loadTabOrder() {
 }
 
 export default function App() {
-  const [data,      setData]      = useState(load);
+  const [data,      setDataRaw]   = useState(load);
+  const setData = (d) => { const v = typeof d==="function"?d(data):d; setDataRaw(v); save(v); };
   const [tab,       setTab]       = useState("home");
   const [tabOrder,  setTabOrder]  = useState(loadTabOrder);
   const [dragId,    setDragId]    = useState(null);
@@ -1731,6 +1894,7 @@ export default function App() {
           budgets:    remote.budgets     || {},
           recurring:  remote.recurring   || [],
           customCats: remote.customCats  || [],
+          customInc:  remote.customInc   || [],
         };
         setData(merged);
         localStorage.setItem(KEY, JSON.stringify(merged));
@@ -1882,6 +2046,7 @@ export default function App() {
       {tab==="challenge" && <Challenge data={data} setData={setData}/>}
       {tab==="budget"    && <Budget    data={data} setData={setData}/>}
       {tab==="reports"   && <Reports   data={data}/>}
+      {tab==="settings"  && <Settings  data={data} setData={setData}/>}
     </div>
   );
 }
